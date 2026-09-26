@@ -1,0 +1,25 @@
+[Event "Original collection fixture"]
+[Round "1"]
+[White "Alpha"]
+[Black "Beta"]
+[ECO "C20"]
+[Result "*"]
+
+1. e4 e5 *
+
+[Event "Original collection fixture"]
+[Round "2"]
+[White "Gamma"]
+[Black "Delta"]
+[ECO "D00"]
+[Result "*"]
+
+1. d4 d5 2. c4 *
+
+[Event "Original collection fixture"]
+[Round "3"]
+[White "Epsilon"]
+[Black "Zeta"]
+[Result "*"]
+
+1. Nf3 *

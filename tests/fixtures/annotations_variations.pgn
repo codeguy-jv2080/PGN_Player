@@ -1,0 +1,8 @@
+[Event "Original variation fixture"]
+[White "White"]
+[Black "Black"]
+[Result "*"]
+
+{Start comment.} 1. e4 $1 {Central space.}
+(1. d4 d5 (1... Nf6 $5 {Flexible reply.} 2. c4) 2. c4)
+e5 2. Nf3 (2. Bc4 $6 Nc6) Nc6 *

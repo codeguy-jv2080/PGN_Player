@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=63", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pgn-player"
+version = "1.0.0"
+description = "A local Windows player and trainer for PGN chess games"
+requires-python = ">=3.10"
+license = {text = "GPL-3.0-or-later"}
+dependencies = ["PySide6-Essentials==6.11.2", "chess==1.11.2"]
+
+[project.gui-scripts]
+pgn-player = "pgn_player.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pgn_player = ["assets/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+qt_api = "pyside6"
+addopts = "-ra"
