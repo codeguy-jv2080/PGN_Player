@@ -13,6 +13,34 @@ def test_fresh_store_has_defaults_and_no_private_state(tmp_path):
         assert store.get("window_geometry") is None
 
 
+def test_loop_defaults_off_for_existing_profiles_and_persists_without_reset(tmp_path):
+    db_path = tmp_path / "existing.sqlite3"
+    with SettingsStore(db_path) as store:
+        store.set("continue_next", False)
+        store.set("delay_seconds", 3.5)
+        store.set("theme", "dark")
+    with sqlite3.connect(db_path) as db:
+        previous_rows = db.execute("SELECT key,value FROM settings ORDER BY key").fetchall()
+
+    with SettingsStore(db_path) as store:
+        settings = store.get_settings()
+        assert settings["loop"] is False
+        assert settings["continue_next"] is False
+        assert settings["delay_seconds"] == 3.5
+        assert settings["theme"] == "dark"
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT key,value FROM settings ORDER BY key").fetchall() == previous_rows
+
+    for enabled in (True, False):
+        with SettingsStore(db_path) as store:
+            store.set("loop", enabled)
+        with SettingsStore(db_path) as store:
+            assert store.get_settings()["loop"] is enabled
+            assert store.get_settings()["continue_next"] is False
+            assert store.get_settings()["delay_seconds"] == 3.5
+            assert store.get_settings()["theme"] == "dark"
+
+
 def test_preferences_geometry_and_resume_survive_reopen(tmp_path):
     db = tmp_path / "state.sqlite3"
     pgn = tmp_path / "study.pgn"
@@ -65,7 +93,8 @@ def test_recent_files_deduplicate_order_bound_and_preserve_source(tmp_path):
 @pytest.mark.parametrize("key,value", [
     ("theme", "neon"), ("delay_seconds", -1), ("delay_seconds", True),
     ("delay_seconds", float("inf")), ("between_games_seconds", -0.1),
-    ("continue_next", "false"), ("guess_color", "red"), ("orientation", []),
+    ("continue_next", "false"), ("loop", "false"), ("loop", 1),
+    ("guess_color", "red"), ("orientation", []),
 ])
 def test_invalid_preference_is_rejected_without_replacing_value(tmp_path, key, value):
     with SettingsStore(tmp_path / "state.sqlite3") as store:

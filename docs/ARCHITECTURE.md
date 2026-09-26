@@ -43,8 +43,12 @@ memory; no full collection of parsed move trees is created.
 `playback.py` owns the collection, game and variation path. Its current node and
 board are the authoritative position. Notation, metadata and board derive from
 that same state. `autoplay.py` supplies pure stepping rules; the window supplies
-the event-loop timer. `guess_move.py` compares legal moves with recorded child
-nodes without editing the PGN tree. Opponent replies are coordinated by the UI.
+the event-loop timer. The optional loop setting repeats the current game or wraps
+the playlist to Game 1, according to next-game continuation. Each transition
+returns to a game's starting position after the between-game delay, then waits
+the normal move delay before playing its first move. `guess_move.py` compares
+legal moves with recorded child nodes without editing the PGN tree. Opponent
+replies are coordinated by the UI.
 
 `storage.py` uses parameterized SQLite writes, a schema/application identifier,
 validated defaults, recent files and resume fingerprints. Unknown, corrupt or

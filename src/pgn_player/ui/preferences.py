@@ -12,6 +12,10 @@ class PreferencesDialog(QDialog):
         self.continue_next = QCheckBox("Continue automatically to the next game")
         self.continue_next.setChecked(settings["continue_next"])
         form.addRow(self.continue_next)
+        self.loop = QCheckBox("Loop playback")
+        self.loop.setChecked(settings["loop"])
+        self.loop.setToolTip("Repeat this game, or the entire PGN when continuing to the next game.")
+        form.addRow(self.loop)
         self.between = QDoubleSpinBox()
         self.between.setRange(0, 120)
         self.between.setSingleStep(.5)
@@ -36,5 +40,6 @@ class PreferencesDialog(QDialog):
         layout.addWidget(buttons)
 
     def values(self):
-        return {"continue_next": self.continue_next.isChecked(), "between_games_seconds": self.between.value(),
+        return {"continue_next": self.continue_next.isChecked(), "loop": self.loop.isChecked(),
+                "between_games_seconds": self.between.value(),
                 "include_variations": self.variations.isChecked(), "reopen_last": self.reopen.isChecked()}

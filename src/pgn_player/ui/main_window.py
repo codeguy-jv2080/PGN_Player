@@ -202,6 +202,11 @@ class MainWindow(QMainWindow):
         self.continue_box.setChecked(self.settings["continue_next"])
         self.continue_box.toggled.connect(self._continue_changed)
         secondary.addWidget(self.continue_box)
+        self.loop_box = QCheckBox("Loop playback")
+        self.loop_box.setToolTip("Repeat this game, or the entire PGN when Continue to next game is enabled.")
+        self.loop_box.setChecked(self.settings["loop"])
+        self.loop_box.toggled.connect(self._loop_changed)
+        secondary.addWidget(self.loop_box)
         secondary.addStretch()
         self.game_position_label = QLabel("No file loaded")
         self.game_position_label.setObjectName("muted")
@@ -315,6 +320,7 @@ class MainWindow(QMainWindow):
         self.autoplay.delay_seconds = self.settings["delay_seconds"]
         self.autoplay.between_games_seconds = self.settings["between_games_seconds"]
         self.autoplay.continue_next = self.settings["continue_next"]
+        self.autoplay.loop = self.settings["loop"]
         self.autoplay.include_variations = self.settings["include_variations"]
         self.guess.include_variations = self.settings["guess_variations"]
 
@@ -612,6 +618,10 @@ class MainWindow(QMainWindow):
         self._save_setting("continue_next", checked)
         self.autoplay.continue_next = checked
 
+    def _loop_changed(self, checked):
+        self._save_setting("loop", checked)
+        self.autoplay.loop = checked
+
     def flip_board(self):
         self.board.orientation = "black" if self.board.orientation == "white" else "white"
         self._save_setting("orientation", self.board.orientation)
@@ -637,6 +647,7 @@ class MainWindow(QMainWindow):
             for key, value in dialog.values().items():
                 self._save_setting(key, value)
             self.continue_box.setChecked(self.settings["continue_next"])
+            self.loop_box.setChecked(self.settings["loop"])
             self._apply_settings()
             if self.autoplay.playing:
                 self._play_timer.start(max(1, int(self.autoplay.next_delay * 1000)))

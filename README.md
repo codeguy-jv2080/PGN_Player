@@ -28,8 +28,10 @@ service, telemetry, embedded browser or chess-engine download dependency.
 3. Use arrows or playback buttons to move through the game. Click notation to
    jump directly to a mainline or variation position.
 4. Press Space or Play for autoplay. Choose a move delay in the control bar.
-   Automatic next-game continuation is enabled by default. Preferences provide
-   the pause between games and optional variation traversal.
+   Automatic next-game continuation is enabled by default. Enable Loop playback
+   beside it to repeat the current game, or the whole PGN when continuation is
+   enabled. Preferences provide the pause between games and optional variation
+   traversal.
 5. Toggle Games to give more space to the board. Drag pane dividers to resize.
    Flip changes orientation, and the theme control switches light/dark mode.
 
@@ -67,13 +69,26 @@ after you turn training off.
 
 ### Variations and playback
 
-Mainline playback is the default. Playing from a manually selected variation
-follows that branch and stops at its end. Return to main line restores the
+Mainline playback is the default. With Loop off, playing from a manually selected
+variation follows that branch and stops at its end. Return to main line restores the
 mainline at the corresponding depth. Optional all-variation playback visits
 nodes in deterministic depth-first order, first child before later siblings;
 the board visibly returns to the correct branch point when changing branches.
-At the final game, playback stops. Search filters are for finding games;
-continuous playback follows the original file's order.
+Loop playback is off by default and is saved with the other local playback
+preferences. Its behavior combines with Continue to next game:
+
+| Continue to next game | Loop playback | At the end |
+| --- | --- | --- |
+| Off | Off | Stop after the current game. |
+| On | Off | Continue through the PGN, then stop after the final game. |
+| Off | On | Return to this game's starting position and repeat it. |
+| On | On | Continue through the PGN, then return to Game 1 and repeat. |
+
+The between-game pause also applies to repeating a game and wrapping to Game 1.
+The starting position is shown before the first move, using the normal move
+delay. Pause stops looping; Play resumes from the displayed position. Search
+filters are for finding games; continuous playback follows the original file's
+order. Autoplay remains unavailable while Guess the Move is active.
 
 ## Local data and safe updates
 

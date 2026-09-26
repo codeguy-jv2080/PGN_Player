@@ -11,6 +11,7 @@ class AutoplayController:
         self.delay_seconds = 2.0
         self.between_games_seconds = 1.0
         self.continue_next = True
+        self.loop = False
         self.include_variations = False
 
     def _next_path(self) -> tuple[int, ...] | None:
@@ -32,26 +33,30 @@ class AutoplayController:
                 node = parent
         return None
 
-    def _has_next_game(self) -> bool:
+    def _transition_target(self) -> int | None:
+        """Choose the game to show at the next playback boundary."""
         collection = self.player.collection
-        return bool(
-            self.continue_next
-            and collection is not None
-            and self.player.game_index + 1 < len(collection)
-            # With ordinary playback, clicking a side line is a focused study
-            # detour. Finish that line without unexpectedly leaving its game.
-            and (self.include_variations or all(index == 0 for index in self.player.path))
-        )
+        if collection is None or self.player.game is None:
+            return None
+        if not self.continue_next:
+            return self.player.game_index if self.loop else None
+        # Ordinary playback treats a selected side line as a study detour.
+        # Explicit Loop mode instead repeats the game or cycles the playlist.
+        if not self.loop and not self.include_variations and any(self.player.path):
+            return None
+        if self.player.game_index + 1 < len(collection):
+            return self.player.game_index + 1
+        return 0 if self.loop else None
 
     @property
     def next_delay(self) -> float:
-        if self._next_path() is None and self._has_next_game():
+        if self._next_path() is None and self._transition_target() is not None:
             return max(0.0, float(self.between_games_seconds))
         return max(0.05, float(self.delay_seconds))
 
     def start(self) -> bool:
         self.playing = self.player.game is not None and (
-            self._next_path() is not None or self._has_next_game()
+            self._next_path() is not None or self._transition_target() is not None
         )
         return self.playing
 
@@ -71,12 +76,13 @@ class AutoplayController:
         path = self._next_path()
         if path is not None:
             self.player.go_to(path)
-            if self._next_path() is None and not self._has_next_game():
+            if self._next_path() is None and self._transition_target() is None:
                 self.pause()
             return "move"
-        if self._has_next_game():
+        target = self._transition_target()
+        if target is not None:
             try:
-                if self.player.next_game():
+                if self.player.select_game(target):
                     return "game"
             except PgnLoadError:
                 self.pause()

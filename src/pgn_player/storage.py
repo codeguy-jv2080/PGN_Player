@@ -21,6 +21,7 @@ DEFAULTS: dict[str, Any] = {
     "delay_seconds": 2.0,
     "between_games_seconds": 1.0,
     "continue_next": True,
+    "loop": False,
     "include_variations": False,
     "orientation": "white",
     "reopen_last": False,
@@ -38,7 +39,7 @@ class StorageError(RuntimeError):
 
 
 def _valid_preference(key: str, value: Any) -> bool:
-    if key in {"continue_next", "include_variations", "reopen_last", "guess_variations"}:
+    if key in {"continue_next", "loop", "include_variations", "reopen_last", "guess_variations"}:
         return type(value) is bool
     if key == "theme":
         return isinstance(value, str) and value in {"light", "dark"}
