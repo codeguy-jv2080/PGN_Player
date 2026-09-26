@@ -13,7 +13,7 @@ from PySide6.QtGui import QAction, QKeySequence
 from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QDialog,
     QDoubleSpinBox, QFileDialog, QFrame, QGroupBox, QHBoxLayout, QInputDialog, QLabel,
     QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
-    QSizePolicy, QSplitter, QTextBrowser, QTextEdit, QVBoxLayout, QWidget)
+    QSizePolicy, QSplitter, QTextEdit, QVBoxLayout, QWidget)
 
 from ..autoplay import AutoplayController
 from ..guess_move import GuessMoveController
@@ -150,18 +150,7 @@ class MainWindow(QMainWindow):
         right_layout.addLayout(notation_header)
         self.notation = NotationWidget()
         self.notation.move_selected.connect(lambda path: self._navigate(lambda: self.player.go_to(path)))
-        right_layout.addWidget(self.notation, 3)
-        self.comment_label = QLabel("COMMENT")
-        self.comment_label.setObjectName("muted")
-        right_layout.addWidget(self.comment_label)
-        self.comments = QTextBrowser()
-        self.comments.setAccessibleName("Current move comment")
-        self.comments.setOpenLinks(False)
-        self.comments.setOpenExternalLinks(False)
-        self.comments.setMaximumHeight(140)
-        self.comments.setMinimumHeight(65)
-        self.comments.document().setDocumentMargin(10)
-        right_layout.addWidget(self.comments, 1)
+        right_layout.addWidget(self.notation, 1)
         self.main_splitter.addWidget(right)
         self.main_splitter.setStretchFactor(0, 3)
         self.main_splitter.setStretchFactor(1, 2)
@@ -338,11 +327,13 @@ class MainWindow(QMainWindow):
             action.setEnabled(False)
 
     def choose_file(self):
-        self._stop_modes()
+        self._pause_playback()
         self._refresh()
         path, _ = QFileDialog.getOpenFileName(self, "Open PGN", "", "PGN files (*.pgn);;All files (*)")
         if path:
             self.open_file(path)
+        else:
+            self._schedule_opponent()
 
     def reopen_last_file(self):
         if self.settings["reopen_last"]:
@@ -354,7 +345,7 @@ class MainWindow(QMainWindow):
         path = str(Path(path).expanduser().resolve())
         if self._closing:
             return
-        self._stop_modes()
+        self._pause_playback()
         self._save_resume()
         if self._worker is not None:
             self._pending_open = (path, restore)
@@ -422,13 +413,15 @@ class MainWindow(QMainWindow):
         self.cancel_load.hide()
         if worker is not None:
             worker.deleteLater()
-        self._refresh()
         if self._closing:
             QTimer.singleShot(0, self.close)
         elif self._pending_open is not None:
             path, restore = self._pending_open
             self._pending_open = None
             self.open_file(path, restore)
+        else:
+            self._resume_guess()
+        self._refresh()
 
     def _cancel_loading(self):
         self._pending_open = None
@@ -436,25 +429,43 @@ class MainWindow(QMainWindow):
             self._worker.requestInterruption()
             self.statusBar().showMessage("Canceling file load…")
 
-    def _stop_modes(self):
+    def _pause_autoplay(self):
         self._play_timer.stop()
-        self._opponent_timer.stop()
         self.autoplay.pause()
+
+    def _pause_playback(self):
+        self._pause_autoplay()
+        self._opponent_timer.stop()
+
+    def _stop_guess(self):
+        self._opponent_timer.stop()
         self.guess.stop()
         self.guess_button.setChecked(False)
         self.guess_panel.hide()
         self.board.input_enabled = False
 
+    def _stop_modes(self):
+        self._pause_autoplay()
+        self._stop_guess()
+
     def _navigate(self, callback):
         if self._loading:
             return
-        self._stop_modes()
+        self._pause_playback()
         try:
             callback()
-            self._refresh()
         except Exception as exc:
             self._error(f"Could not navigate: {exc}")
-            self._refresh_controls()
+        finally:
+            self._resume_guess()
+            self._refresh()
+
+    def _resume_guess(self):
+        # Keep the session, side and scores; start() would reset them. Accessing
+        # pending_answer discards an answer belonging to the previous position.
+        if self.guess.mode != "off" and not self.guess.pending_answer:
+            self.guess_feedback.setText("Click or drag a piece to guess the recorded move.")
+        self._schedule_opponent()
 
     def _refresh(self):
         game = self.player.game
@@ -482,7 +493,6 @@ class MainWindow(QMainWindow):
                 if opening:
                     groups.append(opening)
             self.metadata.setText("\n".join(groups))
-            self.comments.setPlainText("Comments are hidden during Guess the Move." if training else (node.comment or "No comment at this position."))
             self.game_position_label.setText(f"Game {self.player.game_index + 1:,} / {len(self.player.collection):,}")
             if self._last_rendered_game != (id(game), self.player.game_index):
                 self.game_list.select_game(self.player.game_index)
@@ -494,7 +504,6 @@ class MainWindow(QMainWindow):
         else:
             self.players_label.setText("Open a PGN to begin")
             self.metadata.setText("A focused player for watching and studying chess games.\nDrop a PGN here, or choose Open PGN.")
-            self.comments.setPlainText("Comments will follow the selected move.")
         turn = "White" if self.player.board.turn else "Black"
         self.turn_label.setText(f"{turn} to move" + (" · check" if self.player.board.is_check() else ""))
         self.guess_stats.setText(f"Guesses: {self.guess.guesses}   Correct: {self.guess.correct}   Incorrect: {self.guess.incorrect}   Score: {self.guess.percentage:.0f}%")
@@ -511,20 +520,22 @@ class MainWindow(QMainWindow):
         self.mainline_button.setEnabled(active and any(path))
         self.previous_game_button.setEnabled(active and self.player.game_index > 0)
         self.next_game_button.setEnabled(active and self.player.game_index + 1 < len(self.player.collection))
-        self.play_button.setEnabled(active)
+        training = self.guess.mode != "off"
+        self.play_button.setEnabled(active and not training)
+        self.play_button.setToolTip("Turn off Guess the Move to use autoplay." if training else "Play / pause (Space)")
         self.play_button.setText("❚❚ Pause" if self.autoplay.playing else "▶ Play")
-        self.guess_button.setEnabled(active)
+        self.guess_button.setEnabled(active or training)
+        self.guess_panel.setEnabled(active)
         self.export_action.setEnabled(active)
         self.board.input_enabled = active and self.guess.waiting_for_guess
 
     def toggle_play(self):
-        if self._loading or self.player.game is None:
+        if self._loading or self.player.game is None or self.guess.mode != "off":
             return
         if self.autoplay.playing:
-            self.autoplay.pause()
-            self._play_timer.stop()
+            self._pause_autoplay()
         else:
-            self._stop_modes()
+            self._pause_playback()
             if self.autoplay.start():
                 self._play_timer.start(max(1, int(self.autoplay.next_delay * 1000)))
         self._refresh()
@@ -585,10 +596,10 @@ class MainWindow(QMainWindow):
 
     def _toggle_guess(self, checked=None):
         enabled = self.guess_button.isChecked() if checked is None else checked
-        if self.player.game is None or self._loading:
-            self.guess_button.setChecked(False)
+        if enabled and (self.player.game is None or self._loading):
+            self.guess_button.setChecked(self.guess.mode != "off")
             return
-        self._stop_modes()
+        self._pause_autoplay()
         if enabled:
             self.guess_button.setChecked(True)
             self.guess_panel.show()
@@ -596,6 +607,8 @@ class MainWindow(QMainWindow):
             self.guess.include_variations = self.guess_variations.isChecked()
             self.guess_feedback.setText("Click or drag a piece to guess the recorded move.")
             self._schedule_opponent()
+        else:
+            self._stop_guess()
         self._refresh()
 
     def _guess_preferences_changed(self, *_):
@@ -615,7 +628,9 @@ class MainWindow(QMainWindow):
 
     def _schedule_opponent(self):
         self._opponent_timer.stop()
-        if self.guess.mode != "off" and not self.guess.waiting_for_guess and not self.guess.pending_answer and not self.player.at_end:
+        if self._closing or self._loading or self.guess.mode == "off" or self.player.game is None:
+            return
+        if not self.guess.waiting_for_guess and not self.guess.pending_answer and not self.player.at_end:
             self._opponent_timer.start(650)
         elif self.player.at_end:
             self.guess_feedback.setText("End of recorded line. Select another game or position to continue studying.")
@@ -623,12 +638,15 @@ class MainWindow(QMainWindow):
     def _opponent_tick(self):
         if self._closing or self._loading or self.guess.mode == "off":
             return
+        if QApplication.activeModalWidget() is not None:
+            self._schedule_opponent()
+            return
         self.guess.play_opponent()
         self._refresh()
         self._schedule_opponent()
 
     def _board_move(self, origin, destination):
-        if not self.guess.waiting_for_guess:
+        if self._loading or self._closing or not self.guess.waiting_for_guess:
             return
         candidates = [move for move in self.player.board.legal_moves if move.from_square == origin and move.to_square == destination]
         if not candidates:
@@ -670,11 +688,12 @@ class MainWindow(QMainWindow):
     def export_game(self):
         if self.player.game is None:
             return
-        self._stop_modes()
+        self._pause_playback()
         self._refresh()
         game = self.player.game
         source = Path(self.player.collection.path).resolve()
         path, _ = QFileDialog.getSaveFileName(self, "Export current game", "game.pgn", "PGN files (*.pgn)")
+        self._schedule_opponent()
         if not path:
             return
         destination = Path(path).resolve()
@@ -740,7 +759,7 @@ class MainWindow(QMainWindow):
                 break
 
     def _show_shortcuts(self):
-        QMessageBox.information(self, "Keyboard shortcuts", "Left / Right — Previous / next move\nHome / End — First / last position\nCtrl+Left / Ctrl+Right — Previous / next game\nSpace — Play / pause\nF — Flip board\nCtrl+O — Open PGN\nCtrl+G — Toggle Guess the Move\n\nPlayback shortcuts are inactive in text-entry fields.\nManual navigation pauses playback and exits Guess the Move.")
+        QMessageBox.information(self, "Keyboard shortcuts", "Left / Right — Previous / next move\nHome / End — First / last position\nCtrl+Left / Ctrl+Right — Previous / next game\nSpace — Play / pause (outside Guess the Move)\nF — Flip board\nCtrl+O — Open PGN\nCtrl+G — Toggle Guess the Move\n\nPlayback shortcuts are inactive in text-entry fields.\nManual navigation pauses autoplay. Guess the Move stays active across games, positions and files until you toggle it off.")
 
     def _about(self):
         QMessageBox.about(self, "About PGN Player", f"<b>PGN Player</b><p>Local chess playback and recorded-move training for Windows.</p><p>{escape(str(self.paths.edition).capitalize())} edition · No account or network required.</p><p>GPL-3.0-or-later. Built with Python, PySide6, python-chess and SQLite.</p>")

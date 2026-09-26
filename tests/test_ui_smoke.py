@@ -54,7 +54,7 @@ def test_launch_open_navigation_theme_and_render(window, qtbot):
     qtbot.mouseClick(window.next_button, Qt.MouseButton.LeftButton)
     assert window.player.path == (0,)
     assert window.board.board.piece_at(chess.E4).symbol() == "P"
-    assert "SECRET" in window.comments.toPlainText()
+    assert "SECRET" in window.notation.toPlainText()
     window.notation.move_selected.emit((1, 0))
     assert window.player.path == (1, 0)
     assert window.mainline_button.isEnabled()
@@ -91,7 +91,6 @@ def test_guess_hides_answers_and_correct_opponent_reply(window, qtbot):
     qtbot.mouseClick(window.guess_button, Qt.MouseButton.LeftButton)
     assert window.guess.mode == "white"
     assert "e4" not in window.notation.toPlainText()
-    assert "SECRET" not in window.comments.toPlainText()
     assert "SECRET" not in window.notation.toPlainText()
     window._board_move(chess.E2, chess.E4)
     assert window.guess.correct == 1
@@ -115,9 +114,283 @@ def test_wrong_guess_requires_continue_and_navigation_cancels_reply(window, qtbo
     assert window._opponent_timer.isActive()
     window._navigate(window.player.first)
     assert not window._opponent_timer.isActive()
-    assert window.guess.mode == "off"
+    assert window.guess.mode == "white"
+    assert window.guess_button.isChecked()
+    assert window.guess.incorrect == 1
     qtbot.wait(750)
     assert window.player.path == ()
+
+
+def test_comments_are_inline_at_twelve_points_without_separate_pane(window):
+    from PySide6.QtWidgets import QLabel, QTextBrowser
+
+    comment = window.notation.document().find("SECRET upcoming comment")
+    assert not comment.isNull()
+    assert comment.charFormat().fontPointSize() == 12
+    assert all(label.text() != "COMMENT" for label in window.findChildren(QLabel))
+    assert window.findChildren(QTextBrowser) == [window.notation]
+
+
+@pytest.mark.parametrize("mode", ["white", "black", "both"])
+def test_guess_stays_active_between_drills_with_same_side_and_score(window, qtbot, mode):
+    window.guess_color.setCurrentIndex(window.guess_color.findData(mode))
+    window.guess_variations.setChecked(True)
+    window._toggle_guess(True)
+    if mode == "black":
+        qtbot.waitUntil(lambda: window.player.path == (0,), timeout=3000)
+        window._board_move(chess.E7, chess.E5)
+    else:
+        window._board_move(chess.E2, chess.E4)
+    assert window.guess.correct == 1
+
+    qtbot.mouseClick(window.next_game_button, Qt.MouseButton.LeftButton)
+    assert window.player.game_index == 1
+    assert window.player.path == ()
+    assert window.guess.mode == mode
+    assert window.guess_color.currentData() == mode
+    assert window.guess.include_variations
+    assert window.guess_button.isChecked()
+    assert window.guess_panel.isVisible()
+    assert window.guess.correct == 1
+    assert window.guess.incorrect == 0
+    assert "d4" not in window.notation.toPlainText()
+    assert "d5" not in window.notation.toPlainText()
+    assert "SECRET" not in window.notation.toPlainText()
+    if mode == "black":
+        qtbot.waitUntil(lambda: window.player.path == (0,), timeout=3000)
+    else:
+        assert not window._opponent_timer.isActive()
+    assert window.guess.waiting_for_guess
+    assert "d5" not in window.notation.toPlainText()
+    assert window.guess.correct == 1
+
+    window.game_list.game_selected.emit(0)
+    assert window.player.game_index == 0
+    assert window.guess.mode == mode
+    assert window.guess.correct == 1
+    window.notation.move_selected.emit((1, 0))
+    assert window.player.path == (1, 0)
+    assert window.guess.mode == mode
+    qtbot.mouseClick(window.mainline_button, Qt.MouseButton.LeftButton)
+    assert window.player.path == (0, 0)
+    assert window.guess.mode == mode
+    assert window.guess.correct == 1
+
+
+def test_guess_navigation_clears_answer_for_old_position(window, qtbot):
+    window._toggle_guess(True)
+    window._board_move(chess.D2, chess.D4)
+    assert window.guess.pending_answer == "e4"
+    assert window.guess_continue.isVisible()
+
+    qtbot.mouseClick(window.next_game_button, Qt.MouseButton.LeftButton)
+    assert window.guess.mode == "white"
+    assert window.guess.pending_answer is None
+    assert not window.guess_continue.isVisible()
+    assert "e4" not in window.guess_feedback.text()
+    assert window.guess.incorrect == 1
+    assert window.board.input_enabled
+    window._board_move(chess.D2, chess.D4)
+    assert window.guess.correct == 1
+    assert window.guess.incorrect == 1
+
+
+def test_guess_failed_navigation_preserves_answer_and_session(window):
+    window._toggle_guess(True)
+    window._board_move(chess.D2, chess.D4)
+    feedback = window.guess_feedback.text()
+    window._navigate(window.player.previous_game)
+    assert window.guess.pending_answer == "e4"
+    assert window.guess_feedback.text() == feedback
+
+    def unavailable():
+        raise RuntimeError("Could not read that game")
+
+    window._navigate(unavailable)
+    assert "Could not read that game" in window._status_error
+    assert window.player.path == ()
+    assert window.guess.mode == "white"
+    assert window.guess.incorrect == 1
+    assert window.guess.pending_answer == "e4"
+    assert window.guess_continue.isVisible()
+    assert window.guess_feedback.text() == feedback
+
+
+def test_guess_manual_navigation_reschedules_current_opponent_reply(window, qtbot):
+    window._toggle_guess(True)
+    window.notation.move_selected.emit((0,))
+    assert window.guess.mode == "white"
+    assert window._opponent_timer.isActive()
+    assert not window.board.input_enabled
+    qtbot.waitUntil(lambda: window.player.path == (0, 0), timeout=3000)
+    assert window.guess.waiting_for_guess
+    assert window.guess.guesses == 0
+    assert "Nf3" not in window.notation.toPlainText()
+
+
+@pytest.mark.parametrize("button_name, expected_path", [
+    ("previous_button", (0,)),
+    ("next_button", (0, 0, 0)),
+    ("first_button", ()),
+    ("last_button", (0, 0, 0, 0)),
+])
+def test_guess_move_buttons_preserve_training_session(window, qtbot, button_name, expected_path):
+    window.guess_color.setCurrentIndex(window.guess_color.findData("both"))
+    window.guess_variations.setChecked(True)
+    window._toggle_guess(True)
+    window._board_move(chess.C2, chess.C4)
+    window._continue_guess()
+    window._board_move(chess.E7, chess.E5)
+    assert window.player.path == (0, 0)
+    assert (window.guess.correct, window.guess.incorrect) == (1, 1)
+
+    qtbot.mouseClick(getattr(window, button_name), Qt.MouseButton.LeftButton)
+    assert window.player.path == expected_path
+    assert window.guess.mode == "both"
+    assert window.guess_button.isChecked()
+    assert window.guess_panel.isVisible()
+    assert window.guess_color.currentData() == "both"
+    assert window.guess_variations.isChecked()
+    assert window.guess.include_variations
+    assert (window.guess.correct, window.guess.incorrect) == (1, 1)
+    assert window.board.input_enabled == (len(expected_path) < 4)
+    assert not window._opponent_timer.isActive()
+    assert not window.play_button.isEnabled()
+    notation = window.notation.toPlainText()
+    assert "SECRET" not in notation
+    assert "d4" not in notation
+    for future_move in ("e4", "e5", "Nf3", "Nc6")[len(expected_path):]:
+        assert future_move not in notation
+    if button_name == "last_button":
+        assert window.player.at_end
+        assert "End of recorded line" in window.guess_feedback.text()
+        qtbot.mouseClick(window.guess_button, Qt.MouseButton.LeftButton)
+        assert window.guess.mode == "off"
+        assert not window.guess_panel.isVisible()
+
+
+def test_ctrl_g_explicitly_enters_and_exits_guess_mode(window, qtbot, qapp):
+    # Activation and key delivery stay within the offscreen Qt test application.
+    assert qapp.platformName() == "offscreen"
+    qapp.setActiveWindow(window)
+    window.notation.setFocus()
+    qtbot.waitUntil(lambda: window.isActiveWindow() and qapp.focusWidget() is window.notation)
+    assert window.guess.mode == "off"
+    qtbot.keyClick(window.notation, Qt.Key.Key_G, Qt.KeyboardModifier.ControlModifier)
+    assert window.guess.mode == "white"
+    assert window.guess_button.isChecked()
+    assert window.guess_panel.isVisible()
+    assert "e4" not in window.notation.toPlainText()
+    window._board_move(chess.E2, chess.E4)
+    assert window.guess.correct == 1
+    assert window._opponent_timer.isActive()
+
+    qtbot.keyClick(window.notation, Qt.Key.Key_G, Qt.KeyboardModifier.ControlModifier)
+    assert window.guess.mode == "off"
+    assert not window.guess_button.isChecked()
+    assert not window.guess_panel.isVisible()
+    assert not window._opponent_timer.isActive()
+    assert not window.board.input_enabled
+    assert window.play_button.isEnabled()
+    assert "SECRET" in window.notation.toPlainText()
+    qtbot.wait(750)
+    assert window.player.path == (0,)
+
+
+def test_only_explicit_guess_exit_cancels_reply_and_allows_autoplay(window, qtbot):
+    window._toggle_guess(True)
+    assert not window.play_button.isEnabled()
+    window.toggle_play()
+    assert window.guess.mode == "white"
+    assert not window.autoplay.playing
+    window._board_move(chess.E2, chess.E4)
+    assert window._opponent_timer.isActive()
+    qtbot.mouseClick(window.guess_button, Qt.MouseButton.LeftButton)
+    assert window.guess.mode == "off"
+    assert not window.guess_button.isChecked()
+    assert not window.guess_panel.isVisible()
+    assert not window._opponent_timer.isActive()
+    assert window.play_button.isEnabled()
+    assert "SECRET" in window.notation.toPlainText()
+    qtbot.wait(750)
+    assert window.player.path == (0,)
+    window.toggle_play()
+    assert window.autoplay.playing
+
+
+@pytest.mark.parametrize("operation", ["open_cancel", "export_cancel", "export"])
+def test_guess_file_dialog_pauses_and_resumes_reply(window, qtbot, tmp_path, monkeypatch, operation):
+    from PySide6.QtWidgets import QFileDialog
+
+    window._toggle_guess(True)
+    window._board_move(chess.E2, chess.E4)
+    assert window._opponent_timer.isActive()
+    destination = tmp_path / "export.pgn"
+
+    def choose(*args):
+        assert not window._opponent_timer.isActive()
+        assert window.guess.mode == "white"
+        assert "SECRET" not in window.notation.toPlainText()
+        return (str(destination), "") if operation == "export" else ("", "")
+
+    if operation == "open_cancel":
+        monkeypatch.setattr(QFileDialog, "getOpenFileName", choose)
+        window.choose_file()
+    else:
+        monkeypatch.setattr(QFileDialog, "getSaveFileName", choose)
+        window.export_game()
+    assert window.guess.mode == "white"
+    assert window.guess.correct == 1
+    assert window.guess_button.isChecked()
+    assert window._opponent_timer.isActive()
+    assert destination.exists() == (operation == "export")
+    qtbot.waitUntil(lambda: window.player.path == (0, 0), timeout=3000)
+    assert window.guess.waiting_for_guess
+
+
+@pytest.mark.parametrize("outcome", ["success", "missing", "empty", "cancel"])
+def test_guess_open_keeps_session_and_resumes_appropriate_position(window, qtbot, tmp_path, monkeypatch, outcome):
+    import pgn_player.ui.main_window as module
+    from pgn_player.pgn_loader import IndexingCancelled
+
+    old_collection = window.player.collection
+    window._toggle_guess(True)
+    window._board_move(chess.E2, chess.E4)
+    path = tmp_path / "new.pgn"
+    if outcome == "success":
+        path.write_text('[Event "New drills"]\n\n1. d4 {HIDDEN new answer} d5 *\n', encoding="utf-8")
+    elif outcome == "empty":
+        path.write_text("", encoding="utf-8")
+    elif outcome == "cancel":
+        def slow_index(path, progress=None, cancel=None):
+            while not cancel():
+                time.sleep(.005)
+            raise IndexingCancelled("Canceled")
+
+        monkeypatch.setattr(module, "index_pgn", slow_index)
+
+    window.open_file(path, restore=False)
+    assert window._loading
+    assert window.guess.mode == "white"
+    assert not window._opponent_timer.isActive()
+    assert not window.board.input_enabled
+    if outcome == "cancel":
+        window._cancel_loading()
+    qtbot.waitUntil(lambda: not window._loading, timeout=5000)
+    assert window.guess.mode == "white"
+    assert window.guess_button.isChecked()
+    assert window.guess.correct == 1
+    if outcome == "success":
+        assert window.player.collection.path == path
+        assert window.player.path == ()
+        assert not window._opponent_timer.isActive()
+        assert "d4" not in window.notation.toPlainText()
+        assert "HIDDEN" not in window.notation.toPlainText()
+    else:
+        assert window.player.collection is old_collection
+        assert window._opponent_timer.isActive()
+        qtbot.waitUntil(lambda: window.player.path == (0, 0), timeout=3000)
+    assert window.guess.waiting_for_guess
 
 
 def test_board_click_input_and_orientation(window, qtbot):

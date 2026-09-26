@@ -40,7 +40,7 @@ class NotationWidget(QTextBrowser):
             self.setHtml("<p>Open a PGN to begin.</p><p>Use the arrow keys to step through moves, or press Space to play.</p>")
             return
         colors = COLORS[theme]
-        chunks = [f"<html><head><style>body{{font-family:'Segoe UI';font-size:12pt;line-height:1.65;color:{colors['text']};}} a{{color:{colors['text']};text-decoration:none;}} .comment{{color:{colors['muted']};font-size:10pt;}} .variation{{color:{colors['muted']};}} </style></head><body>"]
+        chunks = [f"<html><head><style>body{{font-family:'Segoe UI';font-size:12pt;line-height:1.65;color:{colors['text']};}} a{{color:{colors['text']};text-decoration:none;}} .comment{{color:{colors['muted']};font-size:12pt;}} .variation{{color:{colors['muted']};}} </style></head><body>"]
 
         def move_html(node, path, first=False):
             board = node.parent.board()

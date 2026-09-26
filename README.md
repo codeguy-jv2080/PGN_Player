@@ -35,6 +35,7 @@ service, telemetry, embedded browser or chess-engine download dependency.
 
 The default move delay is two seconds and the between-game pause is one second.
 Comments, NAGs, variations, metadata and FEN starting positions are supported.
+Comments appear inline in the move list at 12 pt.
 The current move is highlighted and notation follows playback. Missing optional
 metadata is omitted. Malformed games display useful warnings where recovery is
 possible; the original PGN is never rewritten.
@@ -51,6 +52,11 @@ the recorded opponent reply is automatic. Reset clears only session statistics.
 Enable variation acceptance to accept an immediate recorded alternative and
 continue along that branch. Session counts cover correct and incorrect guesses
 and percentage correct; no scores or game records are written into the PGN.
+
+Guess the Move stays active when you change games, navigate positions or open
+another PGN. Your selected side and scores carry across those drills. Click
+Guess the Move again or press Ctrl+G to leave training; autoplay is available
+after you turn training off.
 
 ### Variations and playback
 
