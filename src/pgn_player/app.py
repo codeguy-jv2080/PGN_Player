@@ -68,6 +68,22 @@ def _smoke_test(app, output: Path) -> int:
             window.player.previous()
             assert window.player.next_game(), "Next game navigation failed"
             window.player.previous_game()
+            # Recreate the window so this proves persistent SQLite reuse rather
+            # than the same-window optimization that shares a loaded index.
+            window.close()
+            app.processEvents()
+            window.deleteLater()
+            window = MainWindow(store, paths)
+            window.show()
+            window.open_file(fixture, restore=False)
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline:
+                app.processEvents()
+                if not window._loading and window._worker is None:
+                    break
+                time.sleep(0.01)
+            assert not window._loading, "Saved index did not finish loading"
+            assert window.player.collection.from_cache, "Second open did not reuse the saved index"
             # Trigger the same rendering path as user navigation.
             if hasattr(window, "refresh"):
                 window.refresh()
@@ -86,7 +102,7 @@ def _smoke_test(app, output: Path) -> int:
             assert window.grab().save(str(dark)), "Cannot render dark UI"
             window.close()
             app.processEvents()
-            result.update(ok=True, games=2, checks=["launch", "open", "board", "navigation", "themes", "close"])
+            result.update(ok=True, games=2, checks=["launch", "open", "board", "navigation", "saved_index", "themes", "close"])
         except Exception:
             result["error"] = traceback.format_exc()
         finally:

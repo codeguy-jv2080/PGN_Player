@@ -81,7 +81,8 @@ tests can also be invoked from a background process with:
 ```
 
 This internal check uses temporary data, loads a generated two-game PGN,
-navigates moves/games, renders both themes, and closes. It creates a JSON report
+navigates moves/games, verifies saved-index reuse, renders both themes, and
+closes. It creates a JSON report
 plus light/dark PNGs beside it. No ordinary user storage is read or written.
 
 Builds are unsigned unless a distributor separately signs the resulting

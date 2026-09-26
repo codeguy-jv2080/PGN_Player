@@ -40,6 +40,13 @@ The current move is highlighted and notation follows playback. Missing optional
 metadata is omitted. Malformed games display useful warnings where recovery is
 possible; the original PGN is never rewritten.
 
+The first open builds and saves a PGN index. Later opens reuse the saved offsets
+and headers when the file's path, size, modification time and file identity match.
+This avoids scanning or hashing an unchanged PGN again. Games still load only
+when selected, with at most eight parsed games kept in memory. Loading a saved
+index uses a brief status message; full indexing progress appears only when an
+index must be built. Changed files and invalid indexes are rebuilt automatically.
+
 ### Guess the Move
 
 Choose White, Black or Both. Future notation and annotations are concealed.
@@ -77,6 +84,11 @@ continuous playback follows the original file's order.
 These stores are independent. Neither edition imports from or falls back to the
 other. If portable storage is unwritable, the app reports the problem rather
 than using installed-edition storage. Settings and resume positions stay local.
+Each edition also keeps its own `pgn-index-cache.sqlite3` in that data directory.
+This disposable cache contains PGN headers, offsets and file metadata, separate
+from preferences and resume positions. Cache problems fall back to normal PGN
+indexing. An unreadable cache database may be preserved beside it as a `.bak`
+before rebuilding; personal settings and original PGNs are never reset.
 Session guess statistics last for the current session. Reopening the last file
 is opt-in. Changed PGNs are reindexed and outdated resume locations are ignored.
 

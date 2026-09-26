@@ -45,9 +45,15 @@ class GameFilter(QSortFilterProxyModel):
         self.result = "Any result"
 
     def filterAcceptsRow(self, source_row, source_parent):
+        # The default unfiltered view must not join every header string in a
+        # multi-million-game collection just to accept every row.
+        if not self.query.strip() and self.result == "Any result":
+            return True
         headers = self.sourceModel().entries[source_row].headers
         if self.result != "Any result" and headers.get("Result", "*") != self.result:
             return False
+        if not self.query.strip():
+            return True
         fields = {"Players": ("White", "Black"), "Event": ("Event", "Site"), "Opening / ECO": ("ECO", "Opening", "Variation")}.get(self.field, tuple(headers))
         text = " ".join(str(headers.get(key, "")) for key in fields).casefold()
         return all(word in text for word in self.query.casefold().split())

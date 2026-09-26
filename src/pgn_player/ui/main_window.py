@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QCheckBox, QCombo
 
 from ..autoplay import AutoplayController
 from ..guess_move import GuessMoveController
-from ..pgn_loader import IndexingCancelled, index_pgn
+from ..pgn_loader import CachedIndexError, IndexingCancelled, index_pgn, open_pgn
 from ..playback import PlaybackController
 from .board import BoardWidget
 from .game_list import GameListWidget
@@ -30,14 +30,21 @@ class IndexWorker(QThread):
     indexed = Signal(object)
     failed = Signal(str)
     progress = Signal(int)
+    phase = Signal(str)
 
-    def __init__(self, path, parent=None):
+    def __init__(self, path, cache_path, parent=None, *, use_cache=True, current_collection=None):
         super().__init__(parent)
         self.path = path
+        self.cache_path = cache_path
+        self.use_cache = use_cache
+        self.current_collection = current_collection
 
     def run(self):
         try:
-            collection = index_pgn(self.path, progress=self.progress.emit, cancel=self.isInterruptionRequested)
+            collection = open_pgn(self.path, cache_path=self.cache_path,
+                progress=self.progress.emit, status=self.phase.emit,
+                cancel=self.isInterruptionRequested, indexer=index_pgn, use_cache=self.use_cache,
+                current_collection=self.current_collection)
             if not self.isInterruptionRequested():
                 self.indexed.emit(collection)
         except IndexingCancelled:
@@ -341,30 +348,52 @@ class MainWindow(QMainWindow):
             if isinstance(path, str) and path:
                 self.open_file(path)
 
-    def open_file(self, path, restore=True):
+    def open_file(self, path, restore=True, *, use_cache=True):
         path = str(Path(path).expanduser().resolve())
         if self._closing:
             return
         self._pause_playback()
         self._save_resume()
         if self._worker is not None:
-            self._pending_open = (path, restore)
+            self._pending_open = (path, restore, use_cache)
             self._worker.requestInterruption()
             return
         self._status_error = ""
         self._restore_requested = restore
         self._loading = True
+        self.progress.setRange(0, 100)
         self.progress.setValue(0)
-        self.progress.show()
+        self.progress.hide()
         self.cancel_load.show()
-        self.statusBar().showMessage(f"Indexing {Path(path).name}…")
+        self.statusBar().showMessage("Loading saved index…")
         self._refresh_controls()
-        self._worker = IndexWorker(path, self)
+        self._worker = IndexWorker(path, self.paths.data_dir / "pgn-index-cache.sqlite3", self,
+            use_cache=use_cache, current_collection=self.player.collection)
         self._worker.indexed.connect(self._indexed)
         self._worker.failed.connect(self._load_failed)
         self._worker.progress.connect(self.progress.setValue)
+        self._worker.phase.connect(self._index_phase)
         self._worker.finished.connect(self._index_finished)
         self._worker.start()
+
+    def _index_phase(self, phase):
+        if self._closing or self._worker is None or self._worker.isInterruptionRequested():
+            return
+        if phase == "indexing":
+            self.progress.setRange(0, 100)
+            self.progress.setValue(0)
+            self.progress.show()
+            self.statusBar().showMessage(f"Indexing {Path(self._worker.path).name}…")
+        elif phase == "saving":
+            self.progress.setRange(0, 0)
+            self.progress.show()
+            self.statusBar().showMessage("Saving PGN index…")
+        elif phase == "current":
+            self.progress.hide()
+            self.statusBar().showMessage("Reusing loaded index…")
+        else:
+            self.progress.hide()
+            self.statusBar().showMessage("Loading saved index…")
 
     def _indexed(self, collection):
         if self._closing or self._pending_open is not None or self._worker is None or self._worker.isInterruptionRequested():
@@ -373,14 +402,26 @@ class MainWindow(QMainWindow):
             if not len(collection):
                 self._error("This file contains no readable PGN games.")
                 return
-            self.player.set_collection(collection)
             notices = []
+            resume = None
             try:
                 resume = self.store.load_resume(collection.path, collection.fingerprint) if self._restore_requested else None
+                # Validate a saved seek before replacing the current player or
+                # saving its resume position during a cache-rebuild retry.
+                if collection.from_cache and resume and 0 <= resume["game_index"] < len(collection):
+                    collection.load_game(resume["game_index"])
+            except CachedIndexError:
+                raise
+            except Exception as exc:
+                notices.append(f"Could not restore the saved position: {exc}")
+            self.player.set_collection(collection)
+            try:
                 if resume:
                     if self.player.select_game(resume["game_index"]):
                         self.player.go_to(resume["variation_path"])
                     self.board.orientation = resume.get("orientation", self.board.orientation)
+            except CachedIndexError:
+                raise
             except Exception as exc:
                 notices.append(f"Could not restore the saved position: {exc}")
             try:
@@ -397,6 +438,8 @@ class MainWindow(QMainWindow):
                 self._error("; ".join([*collection.warnings, *notices]))
             self._refresh()
             self.file_loaded.emit(str(collection.path))
+        except CachedIndexError:
+            self.open_file(collection.path, restore=self._restore_requested, use_cache=False)
         except Exception as exc:
             self._error(f"Could not open PGN: {exc}")
             self._refresh()
@@ -416,9 +459,9 @@ class MainWindow(QMainWindow):
         if self._closing:
             QTimer.singleShot(0, self.close)
         elif self._pending_open is not None:
-            path, restore = self._pending_open
+            path, restore, use_cache = self._pending_open
             self._pending_open = None
-            self.open_file(path, restore)
+            self.open_file(path, restore, use_cache=use_cache)
         else:
             self._resume_guess()
         self._refresh()
@@ -454,6 +497,8 @@ class MainWindow(QMainWindow):
         self._pause_playback()
         try:
             callback()
+        except CachedIndexError:
+            self.open_file(self.player.collection.path, use_cache=False)
         except Exception as exc:
             self._error(f"Could not navigate: {exc}")
         finally:
@@ -550,6 +595,8 @@ class MainWindow(QMainWindow):
                 self._play_timer.start(max(1, int(self.autoplay.next_delay * 1000)))
             else:
                 self.statusBar().showMessage("Playback finished.")
+        except CachedIndexError:
+            self.open_file(self.player.collection.path, use_cache=False)
         except Exception as exc:
             self.autoplay.pause()
             self._error(f"Playback stopped: {exc}")
