@@ -16,8 +16,12 @@ import time
 from typing import Any, Sequence
 
 
+NOTATION_FONT_SIZES = (10, 12, 14, 16, 18)
+DEFAULT_NOTATION_FONT_SIZE = 12
+
 DEFAULTS: dict[str, Any] = {
     "theme": "light",
+    "notation_font_size": DEFAULT_NOTATION_FONT_SIZE,
     "delay_seconds": 2.0,
     "between_games_seconds": 1.0,
     "continue_next": True,
@@ -39,6 +43,8 @@ class StorageError(RuntimeError):
 
 
 def _valid_preference(key: str, value: Any) -> bool:
+    if key == "notation_font_size":
+        return type(value) is int and value in NOTATION_FONT_SIZES
     if key in {"continue_next", "loop", "include_variations", "reopen_last", "guess_variations"}:
         return type(value) is bool
     if key == "theme":

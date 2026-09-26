@@ -37,7 +37,13 @@ service, telemetry, embedded browser or chess-engine download dependency.
 
 The default move delay is two seconds and the between-game pause is one second.
 Comments, NAGs, variations, metadata and FEN starting positions are supported.
-Comments appear inline in the move list at 12 pt.
+Comments appear inline in the move list. View → Notation Font Size offers 10,
+12, 14, 16 and 18 pt, with 12 pt as the default. Moves, comments, variations and
+NAG symbols use the same selected size while keeping their colors and emphasis.
+Changes apply immediately and are remembered for this edition. Ctrl++ and Ctrl+-
+adjust the size; Ctrl+0 restores 12 pt. These shortcuts are inactive in text-entry
+fields. Other interface text sizes stay unchanged, and resizing keeps the current
+move in view without interrupting playback or Guess the Move.
 The current move is highlighted and notation follows playback. Missing optional
 metadata is omitted. Malformed games display useful warnings where recovery is
 possible; the original PGN is never rewritten.

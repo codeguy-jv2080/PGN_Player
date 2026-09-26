@@ -2,12 +2,13 @@ import sqlite3
 
 import pytest
 
-from pgn_player.storage import APPLICATION_ID, DEFAULTS, SettingsStore, StorageError
+from pgn_player.storage import APPLICATION_ID, DEFAULTS, NOTATION_FONT_SIZES, SettingsStore, StorageError
 
 
 def test_fresh_store_has_defaults_and_no_private_state(tmp_path):
     with SettingsStore(tmp_path / "new.sqlite3") as store:
         assert store.get_settings() == DEFAULTS
+        assert store.get_settings()["notation_font_size"] == 12
         assert store.recent_files() == []
         assert store.load_resume(tmp_path / "game.pgn", "hash") is None
         assert store.get("window_geometry") is None
@@ -39,6 +40,40 @@ def test_loop_defaults_off_for_existing_profiles_and_persists_without_reset(tmp_
             assert store.get_settings()["continue_next"] is False
             assert store.get_settings()["delay_seconds"] == 3.5
             assert store.get_settings()["theme"] == "dark"
+
+
+def test_notation_font_default_and_saved_sizes_preserve_existing_preferences(tmp_path):
+    db_path = tmp_path / "existing.sqlite3"
+    with SettingsStore(db_path) as store:
+        store.set("theme", "dark")
+        store.set("loop", True)
+    with sqlite3.connect(db_path) as db:
+        previous_rows = db.execute("SELECT key,value FROM settings ORDER BY key").fetchall()
+    with SettingsStore(db_path) as store:
+        assert store.get_settings()["notation_font_size"] == 12
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT key,value FROM settings ORDER BY key").fetchall() == previous_rows
+
+    for size in NOTATION_FONT_SIZES:
+        with SettingsStore(db_path) as store:
+            store.set("notation_font_size", size)
+        with SettingsStore(db_path) as store:
+            assert store.get_settings()["notation_font_size"] == size
+            assert store.get_settings()["theme"] == "dark"
+            assert store.get_settings()["loop"] is True
+
+
+@pytest.mark.parametrize("encoded", ["11", '"18"', "true", "14.0", "null"])
+def test_invalid_saved_notation_size_defaults_to_12_without_erasing(tmp_path, encoded):
+    db_path = tmp_path / "invalid-size.sqlite3"
+    with SettingsStore(db_path):
+        pass
+    with sqlite3.connect(db_path) as db:
+        db.execute("INSERT INTO settings(key,value) VALUES('notation_font_size',?)", (encoded,))
+    with SettingsStore(db_path) as store:
+        assert store.get_settings()["notation_font_size"] == 12
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT value FROM settings WHERE key='notation_font_size'").fetchone()[0] == encoded
 
 
 def test_preferences_geometry_and_resume_survive_reopen(tmp_path):
@@ -94,6 +129,8 @@ def test_recent_files_deduplicate_order_bound_and_preserve_source(tmp_path):
     ("theme", "neon"), ("delay_seconds", -1), ("delay_seconds", True),
     ("delay_seconds", float("inf")), ("between_games_seconds", -0.1),
     ("continue_next", "false"), ("loop", "false"), ("loop", 1),
+    ("notation_font_size", 11), ("notation_font_size", "16"),
+    ("notation_font_size", 16.0), ("notation_font_size", True),
     ("guess_color", "red"), ("orientation", []),
 ])
 def test_invalid_preference_is_rejected_without_replacing_value(tmp_path, key, value):

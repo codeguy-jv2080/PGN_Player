@@ -58,6 +58,10 @@ require `edition.json` next to the executable; development is separate too.
 
 The UI uses Qt Widgets, QPainter and local chess SVG assets. PGN text is escaped
 before rich-text rendering. Training hides future moves and their annotations.
+Notation has one saved point size for moves, comments, variations and NAGs. The
+View menu and guarded keyboard shortcuts update only its document and scroll to
+the current move; they do not reload games or alter player/training state or
+playback timers. Global widget fonts and board coordinates are unaffected.
 No WebView, server or browser profile is involved.
 
 Portable packaging copies a clean compiler payload into the established folder,

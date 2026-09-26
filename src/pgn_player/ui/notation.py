@@ -2,6 +2,7 @@
 from html import escape
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QTextBrowser
+from ..storage import DEFAULT_NOTATION_FONT_SIZE, NOTATION_FONT_SIZES
 from .themes import COLORS
 
 NAGS = {1: "!", 2: "?", 3: "!!", 4: "??", 5: "!?", 6: "?!", 10: "=", 13: "∞", 14: "⩲", 15: "⩱", 16: "±", 17: "∓", 18: "+−", 19: "−+"}
@@ -26,6 +27,18 @@ class NotationWidget(QTextBrowser):
         self.anchorClicked.connect(self._clicked)
         self.setPlaceholderText("Open a PGN to view its moves and variations.")
         self.document().setDocumentMargin(16)
+        self.font_size = DEFAULT_NOTATION_FONT_SIZE
+        self._last_context = (None, None, "light", False)
+        self.set_font_size(self.font_size)
+
+    def set_font_size(self, size):
+        if type(size) is not int or size not in NOTATION_FONT_SIZES:
+            raise ValueError(f"Notation font size must be one of {NOTATION_FONT_SIZES}.")
+        self.font_size = size
+        font = self.document().defaultFont()
+        font.setPointSize(size)
+        self.document().setDefaultFont(font)
+        self.show_game(*self._last_context)
 
     def _clicked(self, url):
         if url.scheme() == "move":
@@ -36,11 +49,13 @@ class NotationWidget(QTextBrowser):
                 pass
 
     def show_game(self, game, current, theme="light", training=False):
-        if game is None:
-            self.setHtml("<p>Open a PGN to begin.</p><p>Use the arrow keys to step through moves, or press Space to play.</p>")
-            return
+        self._last_context = (game, current, theme, training)
         colors = COLORS[theme]
-        chunks = [f"<html><head><style>body{{font-family:'Segoe UI';font-size:12pt;line-height:1.65;color:{colors['text']};}} a{{color:{colors['text']};text-decoration:none;}} .comment{{color:{colors['muted']};font-size:12pt;}} .variation{{color:{colors['muted']};}} </style></head><body>"]
+        chunks = [f"<html><head><style>body{{font-family:'Segoe UI';font-size:{self.font_size}pt;line-height:1.65;color:{colors['text']};}} a{{color:{colors['text']};text-decoration:none;}} .comment{{color:{colors['muted']};}} .variation{{color:{colors['muted']};}} </style></head><body>"]
+        if game is None:
+            chunks.append("<p>Open a PGN to begin.</p><p>Use the arrow keys to step through moves, or press Space to play.</p></body></html>")
+            self.setHtml("".join(chunks))
+            return
 
         def move_html(node, path, first=False):
             board = node.parent.board()
@@ -50,7 +65,7 @@ class NotationWidget(QTextBrowser):
             selected = node is current
             variation = any(path)
             style = (' style="background:#007BFF;color:#FFFFFF;"' if selected else
-                     f' style="color:{colors["muted"]};font-size:11pt;"' if variation else "")
+                     f' style="color:{colors["muted"]};"' if variation else "")
             anchor = '<a name="current"></a>' if selected else ""
             link = ".".join(map(str, path))
             move_text = f"{san}{nags}" if variation else f"<b>{san}{nags}</b>"

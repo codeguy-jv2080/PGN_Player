@@ -9,7 +9,7 @@ import tempfile
 import chess
 import chess.pgn
 from PySide6.QtCore import QByteArray, QEvent, QThread, QTimer, Qt, Signal
-from PySide6.QtGui import QAction, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QCheckBox, QComboBox, QDialog,
     QDoubleSpinBox, QFileDialog, QFrame, QGroupBox, QHBoxLayout, QInputDialog, QLabel,
     QLineEdit, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton,
@@ -19,6 +19,7 @@ from ..autoplay import AutoplayController
 from ..guess_move import GuessMoveController
 from ..pgn_loader import CachedIndexError, IndexingCancelled, index_pgn, open_pgn
 from ..playback import PlaybackController
+from ..storage import DEFAULT_NOTATION_FONT_SIZE, NOTATION_FONT_SIZES
 from .board import BoardWidget
 from .game_list import GameListWidget
 from .notation import NotationWidget
@@ -286,6 +287,19 @@ class MainWindow(QMainWindow):
             action = QAction(label, self)
             action.triggered.connect(callback)
             view_menu.addAction(action)
+        view_menu.addSeparator()
+        self.notation_font_menu = view_menu.addMenu("Notation Font Size")
+        self.notation_font_group = QActionGroup(self)
+        self.notation_font_group.setExclusive(True)
+        self.notation_font_actions = {}
+        for size in NOTATION_FONT_SIZES:
+            action = QAction(f"{size} pt", self)
+            action.setCheckable(True)
+            action.setChecked(size == self.settings["notation_font_size"])
+            action.triggered.connect(lambda checked=False, size=size: self._set_notation_font_size(size))
+            self.notation_font_group.addAction(action)
+            self.notation_font_menu.addAction(action)
+            self.notation_font_actions[size] = action
         help_menu = self.menuBar().addMenu("&Help")
         shortcuts = QAction("Keyboard shortcuts", self)
         shortcuts.triggered.connect(self._show_shortcuts)
@@ -317,6 +331,7 @@ class MainWindow(QMainWindow):
             self.games_button.setText("Show games")
 
     def _apply_settings(self):
+        self.notation.set_font_size(self.settings["notation_font_size"])
         self.autoplay.delay_seconds = self.settings["delay_seconds"]
         self.autoplay.between_games_seconds = self.settings["between_games_seconds"]
         self.autoplay.continue_next = self.settings["continue_next"]
@@ -622,6 +637,21 @@ class MainWindow(QMainWindow):
         self._save_setting("loop", checked)
         self.autoplay.loop = checked
 
+    def _set_notation_font_size(self, size):
+        if type(size) is not int or size not in NOTATION_FONT_SIZES:
+            return
+        # Redraw only notation: do not reload the game, navigate, refresh the
+        # board/training controls, or interrupt either playback timer.
+        self.notation.set_font_size(size)
+        self.notation_font_actions[size].setChecked(True)
+        if self.settings["notation_font_size"] != size:
+            self._save_setting("notation_font_size", size)
+
+    def _change_notation_font_size(self, step):
+        index = NOTATION_FONT_SIZES.index(self.notation.font_size)
+        index = max(0, min(len(NOTATION_FONT_SIZES) - 1, index + step))
+        self._set_notation_font_size(NOTATION_FONT_SIZES[index])
+
     def flip_board(self):
         self.board.orientation = "black" if self.board.orientation == "white" else "white"
         self._save_setting("orientation", self.board.orientation)
@@ -793,7 +823,11 @@ class MainWindow(QMainWindow):
         action = None
         if ctrl:
             action = {Qt.Key.Key_Left: lambda: self._navigate(self.player.previous_game), Qt.Key.Key_Right: lambda: self._navigate(self.player.next_game),
-                Qt.Key.Key_G: lambda: self._toggle_guess(not self.guess_button.isChecked())}.get(key)
+                Qt.Key.Key_G: lambda: self._toggle_guess(not self.guess_button.isChecked()),
+                Qt.Key.Key_Plus: lambda: self._change_notation_font_size(1),
+                Qt.Key.Key_Equal: lambda: self._change_notation_font_size(1),
+                Qt.Key.Key_Minus: lambda: self._change_notation_font_size(-1),
+                Qt.Key.Key_0: lambda: self._set_notation_font_size(DEFAULT_NOTATION_FONT_SIZE)}.get(key)
         elif not (modifiers & Qt.KeyboardModifier.ShiftModifier):
             action = {Qt.Key.Key_Left: lambda: self._navigate(self.player.previous), Qt.Key.Key_Right: lambda: self._navigate(self.player.next),
                 Qt.Key.Key_Home: lambda: self._navigate(self.player.first), Qt.Key.Key_End: lambda: self._navigate(self.player.last),
@@ -817,7 +851,7 @@ class MainWindow(QMainWindow):
                 break
 
     def _show_shortcuts(self):
-        QMessageBox.information(self, "Keyboard shortcuts", "Left / Right — Previous / next move\nHome / End — First / last position\nCtrl+Left / Ctrl+Right — Previous / next game\nSpace — Play / pause (outside Guess the Move)\nF — Flip board\nCtrl+O — Open PGN\nCtrl+G — Toggle Guess the Move\n\nPlayback shortcuts are inactive in text-entry fields.\nManual navigation pauses autoplay. Guess the Move stays active across games, positions and files until you toggle it off.")
+        QMessageBox.information(self, "Keyboard shortcuts", "Left / Right — Previous / next move\nHome / End — First / last position\nCtrl+Left / Ctrl+Right — Previous / next game\nSpace — Play / pause (outside Guess the Move)\nF — Flip board\nCtrl+O — Open PGN\nCtrl+G — Toggle Guess the Move\nCtrl++ / Ctrl+- — Increase / decrease notation font\nCtrl+0 — Reset notation font to 12 pt\n\nPlayback and notation-size shortcuts are inactive in text-entry fields.\nManual navigation pauses autoplay. Guess the Move stays active across games, positions and files until you toggle it off.")
 
     def _about(self):
         QMessageBox.about(self, "About PGN Player", f"<b>PGN Player</b><p>Local chess playback and recorded-move training for Windows.</p><p>{escape(str(self.paths.edition).capitalize())} edition · No account or network required.</p><p>GPL-3.0-or-later. Built with Python, PySide6, python-chess and SQLite.</p>")
