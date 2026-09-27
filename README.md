@@ -20,6 +20,9 @@ Build outputs are in `dist/`:
 Windows 10/11, 64-bit. The application works offline. It has no account, cloud
 service, telemetry, embedded browser or chess-engine download dependency.
 
+The current Windows builds are not code-signed. Windows SmartScreen or another
+reputation-based security prompt may therefore appear on first launch or install.
+
 ## Using the player
 
 1. Open a `.pgn` using File → Open, Ctrl+O, or drag a file onto the window.
