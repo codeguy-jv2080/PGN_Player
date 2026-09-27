@@ -79,6 +79,10 @@ games**, including loading sampled games. Indexing peaked at approximately
 **12.9 GiB of RAM**. Performance and memory requirements vary by hardware and
 PGN contents.
 
+![PGN Player showing game 3,075,554 of 5,591,913](docs/images/large-file-example.png)
+
+Example: viewing game **3,075,554** in a PGN containing **5,591,913 games**.
+
 ### Guess the Move
 
 Choose White, Black or Both. Future notation and annotations are concealed.
