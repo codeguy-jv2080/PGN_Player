@@ -48,6 +48,10 @@ reputation-based security prompt may therefore appear on first launch or install
 5. Toggle Games to give more space to the board. Drag pane dividers to resize.
    Flip changes orientation, and the theme control switches light/dark mode.
 
+Choose **File → Export current game…** to save the selected game as a separate
+PGN file, including its metadata, comments, and variations. The original PGN
+remains unchanged.
+
 The default move delay is two seconds and the between-game pause is one second.
 Comments, NAGs, variations, metadata and FEN starting positions are supported.
 Comments appear inline in the move list. View → Notation Font Size offers 10,
