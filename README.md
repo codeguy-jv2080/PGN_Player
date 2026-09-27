@@ -6,7 +6,8 @@ recorded moves for White, Black, or both sides.
 
 ## Windows downloads
 
-Build outputs are in `dist/`:
+Published Windows packages are listed on [GitHub Releases](https://github.com/codeguy-jv2080/PGN_Player/releases).
+Locally built packages are written to `dist/`:
 
 - **PGN Player Portable.zip** — extract the entire folder to a writable location,
   then run `PGN Player.exe`. Keep its `_internal` runtime folder and `edition.json`
@@ -16,6 +17,7 @@ Build outputs are in `dist/`:
   and normal uninstall support. Windows lets you choose the default PGN app.
 - **PGN Player Source.zip** — application source, tests, fixtures, build scripts,
   pinned dependency versions and license notices.
+- **SHA256SUMS.txt** — SHA-256 checksums for the three packages.
 
 Windows 10/11, 64-bit. The application works offline. It has no account, cloud
 service, telemetry, embedded browser or chess-engine download dependency.

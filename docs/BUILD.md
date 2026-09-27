@@ -3,9 +3,13 @@
 ## Requirements
 
 - Windows 10/11 x64
-- Python 3.10 or later (the supplied build was verified with 3.10.6 x64)
+- CPython 3.10–3.14 x64 (the range accepted by the pinned dependencies)
 - Inno Setup 6 for installer compilation
 - Internet access only to obtain development dependencies
+
+The supplied build and tests were verified with CPython 3.10.6 x64. Other
+interpreter versions in the accepted range have not been verified. Each build
+records its exact runtime and packaging versions in `licenses/runtime/VERSIONS.txt`.
 
 Use PowerShell in the source folder:
 

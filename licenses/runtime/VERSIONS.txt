@@ -1,0 +1,8 @@
+Runtime and packaging versions for this build
+CPython: 3.10.6
+Architecture: 64-bit
+SQLite: 3.37.2
+chess: 1.11.2
+PySide6-Essentials: 6.11.2
+shiboken6: 6.11.2
+pyinstaller: 6.22.3
