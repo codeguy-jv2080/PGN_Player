@@ -113,7 +113,7 @@ Practice recorded moves with future notation hidden and session scores visible.
 
 ### Dark Mode
 
-Study in Dark Mode with the game list collapsed to give the board more room.
+The game list can be collapsed in both Light and Dark Mode to give the board more room.
 
 ![PGN Player in Dark Mode with a large chessboard and move notation](docs/images/dark-mode.png)
 
