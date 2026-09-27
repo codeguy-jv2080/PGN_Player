@@ -103,6 +103,20 @@ delay. Pause stops looping; Play resumes from the displayed position. Search
 filters are for finding games; continuous playback follows the original file's
 order. Autoplay remains unavailable while Guess the Move is active.
 
+## Screenshots
+
+### Guess the Move
+
+Practice recorded moves with future notation hidden and session scores visible.
+
+![PGN Player in Guess the Move mode with future notation hidden and training controls visible](docs/images/guess-the-move.png)
+
+### Dark Mode
+
+Study in Dark Mode with the game list collapsed to give the board more room.
+
+![PGN Player in Dark Mode with a large chessboard and move notation](docs/images/dark-mode.png)
+
 ## Local data and safe updates
 
 - Portable: `data/pgn-player.sqlite3` beside that copy's executable.
