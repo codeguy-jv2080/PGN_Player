@@ -6,6 +6,12 @@ recorded moves for White, Black, or both sides.
 
 ![PGN Player showing the chessboard, move notation, and game list](docs/images/game-list.png)
 
+## Demo
+
+[![Watch the PGN Player demo on YouTube](https://img.youtube.com/vi/f0BgU_3JqvU/hqdefault.jpg)](https://youtu.be/f0BgU_3JqvU)
+
+[Watch the 75-second narrated demo on YouTube](https://youtu.be/f0BgU_3JqvU).
+
 ## Windows downloads
 
 Published Windows packages are listed on [GitHub Releases](https://github.com/codeguy-jv2080/PGN_Player/releases).
