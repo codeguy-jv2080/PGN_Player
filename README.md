@@ -72,6 +72,13 @@ when selected, with at most eight parsed games kept in memory. Loading a saved
 index uses a brief status message; full indexing progress appears only when an
 index must be built. Changed files and invalid indexes are rebuilt automatically.
 
+### Large-file testing
+
+Tested indexing and cached reopening with a **5.08 GB PGN containing 5,591,913
+games**, including loading sampled games. Indexing peaked at approximately
+**12.9 GiB of RAM**. Performance and memory requirements vary by hardware and
+PGN contents.
+
 ### Guess the Move
 
 Choose White, Black or Both. Future notation and annotations are concealed.
