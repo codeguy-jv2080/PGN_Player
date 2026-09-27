@@ -4,6 +4,8 @@ A local Windows desktop player and trainer for PGN chess games. Open a file,
 press Play, and watch its games continuously. Use Guess the Move to study the
 recorded moves for White, Black, or both sides.
 
+![PGN Player showing the chessboard, move notation, and game list](docs/images/game-list.png)
+
 ## Windows downloads
 
 Published Windows packages are listed on [GitHub Releases](https://github.com/codeguy-jv2080/PGN_Player/releases).
