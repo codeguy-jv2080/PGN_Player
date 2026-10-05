@@ -47,6 +47,14 @@ reputation-based security prompt may therefore appear on first launch or install
    traversal.
 5. Toggle Games to give more space to the board. Drag pane dividers to resize.
    Flip changes orientation, and the theme control switches light/dark mode.
+   **Hide notation** hides the right-hand sidebar, including game details, and
+   gives its space to the board. Use **Show notation** or **View → Show notation**
+   to bring it back. Notation is visible by default; each edition remembers your
+   choice and pane width. Toggling it leaves playback and Guess the Move running.
+
+**View → Show board coordinates** separately shows or hides the **a–h** and
+**1–8** labels around the board. Coordinates are shown by default, and each
+edition remembers your choice. The board size and notation sidebar stay as they are.
 
 Choose **File → Export current game…** to save the selected game as a separate
 PGN file, including its metadata, comments, and variations. The original PGN

@@ -68,6 +68,15 @@ def _smoke_test(app, output: Path) -> int:
             window.player.previous()
             assert window.player.next_game(), "Next game navigation failed"
             window.player.previous_game()
+            assert window.notation_panel.isVisible(), "Notation should start visible"
+            board_width = window.board.width()
+            window.notation_button.click()
+            app.processEvents()
+            assert window.notation_panel.isHidden(), "Notation did not hide"
+            assert window.board.width() > board_width, "Board did not reclaim sidebar space"
+            assert window.board.coordinates_visible, "Coordinates should start visible"
+            window.coordinates_action.trigger()
+            assert not window.board.coordinates_visible, "Coordinates did not hide"
             # Recreate the window so this proves persistent SQLite reuse rather
             # than the same-window optimization that shares a loaded index.
             window.close()
@@ -75,6 +84,14 @@ def _smoke_test(app, output: Path) -> int:
             window.deleteLater()
             window = MainWindow(store, paths)
             window.show()
+            assert window.notation_panel.isHidden(), "Notation visibility was not remembered"
+            assert not window.board.coordinates_visible, "Coordinate visibility was not remembered"
+            window.coordinates_action.trigger()
+            assert window.board.coordinates_visible, "View menu did not restore coordinates"
+            window.notation_action.trigger()
+            app.processEvents()
+            assert window.notation_panel.isVisible(), "View menu did not restore notation"
+            assert store.get_settings()["notation_visible"] is True
             window.open_file(fixture, restore=False)
             deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
@@ -102,7 +119,7 @@ def _smoke_test(app, output: Path) -> int:
             assert window.grab().save(str(dark)), "Cannot render dark UI"
             window.close()
             app.processEvents()
-            result.update(ok=True, games=2, checks=["launch", "open", "board", "navigation", "saved_index", "themes", "close"])
+            result.update(ok=True, games=2, checks=["launch", "open", "board", "navigation", "notation_visibility", "board_coordinates", "saved_index", "themes", "close"])
         except Exception:
             result["error"] = traceback.format_exc()
         finally:

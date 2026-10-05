@@ -71,6 +71,7 @@ class MainWindow(QMainWindow):
         self._pending_open = None
         self._restore_requested = True
         self._last_rendered_game = None
+        self._notation_splitter_state = None
         self._status_error = ""
         self._play_timer = QTimer(self)
         self._play_timer.setSingleShot(True)
@@ -118,6 +119,9 @@ class MainWindow(QMainWindow):
         self.file_label.setTextFormat(Qt.TextFormat.PlainText)
         self.file_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         header.addWidget(self.file_label, 1)
+        self.notation_button = self._button("Hide notation", self._toggle_notation,
+            "Show or hide the notation sidebar to give the board more room.")
+        header.addWidget(self.notation_button)
         self.theme_button = self._button("Dark mode", self.toggle_theme)
         header.addWidget(self.theme_button)
         self.guess_button = self._button("Guess the Move", self._toggle_guess, "Train with recorded PGN moves (Ctrl+G)")
@@ -132,7 +136,7 @@ class MainWindow(QMainWindow):
         self.board = BoardWidget()
         self.board.move_requested.connect(self._board_move)
         self.main_splitter.addWidget(self.board)
-        right = QWidget()
+        self.notation_panel = right = QWidget()
         right.setMinimumWidth(290)
         right_layout = QVBoxLayout(right)
         right_layout.setContentsMargins(5, 0, 0, 0)
@@ -287,6 +291,16 @@ class MainWindow(QMainWindow):
             action = QAction(label, self)
             action.triggered.connect(callback)
             view_menu.addAction(action)
+        self.coordinates_action = QAction("Show board coordinates", self)
+        self.coordinates_action.setCheckable(True)
+        self.coordinates_action.setChecked(self.settings["board_coordinates_visible"])
+        self.coordinates_action.triggered.connect(self._set_board_coordinates_visible)
+        view_menu.addAction(self.coordinates_action)
+        self.notation_action = QAction("Show notation", self)
+        self.notation_action.setCheckable(True)
+        self.notation_action.setChecked(self.settings["notation_visible"])
+        self.notation_action.triggered.connect(self._set_notation_visible)
+        view_menu.addAction(self.notation_action)
         view_menu.addSeparator()
         self.notation_font_menu = view_menu.addMenu("Notation Font Size")
         self.notation_font_group = QActionGroup(self)
@@ -329,8 +343,11 @@ class MainWindow(QMainWindow):
         if not self.store.get("game_list_visible", True):
             self.game_list.hide()
             self.games_button.setText("Show games")
+        self._set_notation_visible(self.settings["notation_visible"])
 
     def _apply_settings(self):
+        self.board.coordinates_visible = self.settings["board_coordinates_visible"]
+        self.board.update()
         self.notation.set_font_size(self.settings["notation_font_size"])
         self.autoplay.delay_seconds = self.settings["delay_seconds"]
         self.autoplay.between_games_seconds = self.settings["between_games_seconds"]
@@ -671,6 +688,36 @@ class MainWindow(QMainWindow):
         self.games_button.setText("Show games" if visible else "Hide games")
         self._save_setting("game_list_visible", not visible)
 
+    def _set_board_coordinates_visible(self, visible):
+        self.board.coordinates_visible = visible
+        self.board.update()
+        self.coordinates_action.setChecked(visible)
+        if self.settings["board_coordinates_visible"] != visible:
+            self._save_setting("board_coordinates_visible", visible)
+
+    def _toggle_notation(self):
+        self._set_notation_visible(self.notation_panel.isHidden())
+
+    def _set_notation_visible(self, visible):
+        was_hidden = self.notation_panel.isHidden()
+        if not visible and not was_hidden:
+            # Preserve the visible proportions even if we close or resize while
+            # hidden. Saving a hidden splitter would otherwise lose pane width.
+            self._notation_splitter_state = self.main_splitter.saveState()
+            focused = QApplication.focusWidget()
+            if focused is not None and self.notation_panel.isAncestorOf(focused):
+                self.notation_button.setFocus()
+        self.notation_panel.setVisible(visible)
+        if visible and was_hidden:
+            if self._notation_splitter_state is not None:
+                self.main_splitter.restoreState(self._notation_splitter_state)
+            self.notation.show_game(self.player.game, self.player.node,
+                self.theme, self.guess.mode != "off")
+        self.notation_button.setText("Hide notation" if visible else "Show notation")
+        self.notation_action.setChecked(visible)
+        if self.settings["notation_visible"] != visible:
+            self._save_setting("notation_visible", visible)
+
     def show_preferences(self):
         dialog = PreferencesDialog(self.settings, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
@@ -867,7 +914,10 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Finishing file operation before closing…")
             return
         self._save_resume()
-        for key, value in (("window_geometry", self.saveGeometry()), ("main_splitter", self.main_splitter.saveState()), ("vertical_splitter", self.vertical_splitter.saveState())):
+        main_splitter_state = (self._notation_splitter_state
+            if self.notation_panel.isHidden() and self._notation_splitter_state is not None
+            else self.main_splitter.saveState())
+        for key, value in (("window_geometry", self.saveGeometry()), ("main_splitter", main_splitter_state), ("vertical_splitter", self.vertical_splitter.saveState())):
             self._save_setting(key, bytes(value.toBase64()).decode("ascii"))
         QApplication.instance().removeEventFilter(self)
         event.accept()

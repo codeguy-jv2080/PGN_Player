@@ -9,6 +9,8 @@ def test_fresh_store_has_defaults_and_no_private_state(tmp_path):
     with SettingsStore(tmp_path / "new.sqlite3") as store:
         assert store.get_settings() == DEFAULTS
         assert store.get_settings()["notation_font_size"] == 12
+        assert store.get_settings()["notation_visible"] is True
+        assert store.get_settings()["board_coordinates_visible"] is True
         assert store.recent_files() == []
         assert store.load_resume(tmp_path / "game.pgn", "hash") is None
         assert store.get("window_geometry") is None
@@ -40,6 +42,47 @@ def test_loop_defaults_off_for_existing_profiles_and_persists_without_reset(tmp_
             assert store.get_settings()["continue_next"] is False
             assert store.get_settings()["delay_seconds"] == 3.5
             assert store.get_settings()["theme"] == "dark"
+
+
+@pytest.mark.parametrize("key", ["notation_visible", "board_coordinates_visible"])
+def test_visibility_defaults_visible_and_preserves_other_preferences(tmp_path, key):
+    db_path = tmp_path / "existing.sqlite3"
+    with SettingsStore(db_path) as store:
+        store.set("theme", "dark")
+        store.set("notation_font_size", 16)
+    with sqlite3.connect(db_path) as db:
+        previous_rows = db.execute("SELECT key,value FROM settings ORDER BY key").fetchall()
+    with SettingsStore(db_path) as store:
+        assert store.get_settings()[key] is True
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT key,value FROM settings ORDER BY key").fetchall() == previous_rows
+
+    for visible in (False, True):
+        with SettingsStore(db_path) as store:
+            store.set(key, visible)
+        with SettingsStore(db_path) as store:
+            settings = store.get_settings()
+            assert settings[key] is visible
+            assert settings["theme"] == "dark"
+            assert settings["notation_font_size"] == 16
+    with SettingsStore(tmp_path / "other-edition.sqlite3") as other:
+        assert other.get_settings() == DEFAULTS
+
+
+@pytest.mark.parametrize("encoded", ['"false"', "0", "null"])
+@pytest.mark.parametrize("key", ["notation_visible", "board_coordinates_visible"])
+def test_invalid_saved_visibility_falls_back_without_erasing(tmp_path, encoded, key):
+    db_path = tmp_path / "invalid-visibility.sqlite3"
+    with SettingsStore(db_path):
+        pass
+    with sqlite3.connect(db_path) as db:
+        db.execute("INSERT INTO settings(key,value) VALUES(?,?)", (key, encoded))
+    with SettingsStore(db_path) as store:
+        assert store.get_settings()[key] is True
+        with pytest.raises(ValueError):
+            store.set(key, 0)
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()[0] == encoded
 
 
 def test_notation_font_default_and_saved_sizes_preserve_existing_preferences(tmp_path):

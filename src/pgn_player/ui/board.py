@@ -20,6 +20,7 @@ class BoardWidget(QWidget):
         self.board = chess.Board()
         self.orientation = "white"
         self.theme = "light"
+        self.coordinates_visible = True
         self.last_move = None
         self.input_enabled = False
         self.selected = None
@@ -85,14 +86,15 @@ class BoardWidget(QWidget):
             piece = self.board.piece_at(self.selected)
             if piece:
                 self._renderers[piece.symbol()].render(painter, QRectF(self._drag_point.x() - side / 2, self._drag_point.y() - side / 2, side, side))
-        painter.setPen(QPen(QColor(colors["muted"])))
-        font = QFont("Segoe UI", max(8, min(12, int(side * .15))))
-        painter.setFont(font)
-        for index in range(8):
-            file = index if self.orientation == "white" else 7 - index
-            rank = 7 - index if self.orientation == "white" else index
-            painter.drawText(QRectF(box.x() + index * side, box.bottom() + 1, side, 16), Qt.AlignmentFlag.AlignCenter, chess.FILE_NAMES[file])
-            painter.drawText(QRectF(box.x() - 17, box.y() + index * side, 15, side), Qt.AlignmentFlag.AlignCenter, str(rank + 1))
+        if self.coordinates_visible:
+            painter.setPen(QPen(QColor(colors["muted"])))
+            font = QFont("Segoe UI", max(8, min(12, int(side * .15))))
+            painter.setFont(font)
+            for index in range(8):
+                file = index if self.orientation == "white" else 7 - index
+                rank = 7 - index if self.orientation == "white" else index
+                painter.drawText(QRectF(box.x() + index * side, box.bottom() + 1, side, 16), Qt.AlignmentFlag.AlignCenter, chess.FILE_NAMES[file])
+                painter.drawText(QRectF(box.x() - 17, box.y() + index * side, 15, side), Qt.AlignmentFlag.AlignCenter, str(rank + 1))
         painter.end()
 
     def mousePressEvent(self, event):
