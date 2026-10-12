@@ -10,6 +10,7 @@ from .themes import COLORS
 
 class BoardWidget(QWidget):
     move_requested = Signal(int, int)
+    step_requested = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -27,6 +28,7 @@ class BoardWidget(QWidget):
         self._press_square = None
         self._press_point = None
         self._drag_point = None
+        self._wheel_delta = 0
         self._renderers = {symbol: QSvgRenderer(QByteArray(chess.svg.piece(chess.Piece.from_symbol(symbol)).encode()), self)
                            for symbol in "PNBRQKpnbrqk"}
 
@@ -96,6 +98,28 @@ class BoardWidget(QWidget):
                 painter.drawText(QRectF(box.x() + index * side, box.bottom() + 1, side, 16), Qt.AlignmentFlag.AlignCenter, chess.FILE_NAMES[file])
                 painter.drawText(QRectF(box.x() - 17, box.y() + index * side, 15, side), Qt.AlignmentFlag.AlignCenter, str(rank + 1))
         painter.end()
+
+    def wheelEvent(self, event):
+        delta = event.angleDelta().y()
+        if (not self.board_rect().contains(event.position()) or not delta
+                or event.buttons() != Qt.MouseButton.NoButton):
+            self._wheel_delta = 0
+            event.ignore()
+            return
+        # A standard notch is 120 angle units. Accumulate smaller wheel events,
+        # but discard a partial notch when the user changes direction.
+        if self._wheel_delta * delta < 0:
+            self._wheel_delta = 0
+        self._wheel_delta += delta
+        event.accept()
+        while abs(self._wheel_delta) >= 120:
+            direction = 1 if self._wheel_delta > 0 else -1
+            self._wheel_delta -= direction * 120
+            self.step_requested.emit(-direction)
+
+    def leaveEvent(self, event):
+        self._wheel_delta = 0
+        super().leaveEvent(event)
 
     def mousePressEvent(self, event):
         if not self.input_enabled or event.button() != Qt.MouseButton.LeftButton:

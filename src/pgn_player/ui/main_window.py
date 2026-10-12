@@ -4,6 +4,7 @@ from __future__ import annotations
 from html import escape
 from pathlib import Path
 import os
+import sys
 import tempfile
 
 import chess
@@ -135,6 +136,8 @@ class MainWindow(QMainWindow):
         self.main_splitter.setChildrenCollapsible(False)
         self.board = BoardWidget()
         self.board.move_requested.connect(self._board_move)
+        self.board.step_requested.connect(lambda step: self._navigate(
+            self.player.next if step > 0 else self.player.previous))
         self.main_splitter.addWidget(self.board)
         self.notation_panel = right = QWidget()
         right.setMinimumWidth(290)
@@ -855,6 +858,27 @@ class MainWindow(QMainWindow):
                 except OSError:
                     pass
 
+    def _keypad_navigation(self, event):
+        if event.modifiers() & Qt.KeyboardModifier.GroupSwitchModifier:
+            return None
+        digit = None
+        if event.modifiers() & Qt.KeyboardModifier.KeypadModifier:
+            # Num Lock changes the Qt key, but not its physical keypad origin.
+            digit = {Qt.Key.Key_8: 8, Qt.Key.Key_Up: 8,
+                Qt.Key.Key_2: 2, Qt.Key.Key_Down: 2,
+                Qt.Key.Key_4: 4, Qt.Key.Key_Left: 4,
+                Qt.Key.Key_6: 6, Qt.Key.Key_Right: 6,
+                Qt.Key.Key_7: 7, Qt.Key.Key_Home: 7,
+                Qt.Key.Key_9: 9, Qt.Key.Key_PageUp: 9}.get(event.key())
+        elif sys.platform == "win32":
+            # Qt prefixes dedicated navigation scans with 0xE000 on Windows.
+            # Match the full scan: never treat those keys as the numeric keypad.
+            digit = {0x48: 8, 0x50: 2, 0x4B: 4, 0x4D: 6,
+                     0x47: 7, 0x49: 9}.get(event.nativeScanCode())
+        return {8: self.player.next_game, 2: self.player.previous_game,
+            4: self.player.previous, 6: self.player.next,
+            7: self.player.first, 9: self.player.last}.get(digit)
+
     def eventFilter(self, watched, event):
         if event.type() != QEvent.Type.KeyPress or not self.isActiveWindow():
             return super().eventFilter(watched, event)
@@ -876,9 +900,13 @@ class MainWindow(QMainWindow):
                 Qt.Key.Key_Minus: lambda: self._change_notation_font_size(-1),
                 Qt.Key.Key_0: lambda: self._set_notation_font_size(DEFAULT_NOTATION_FONT_SIZE)}.get(key)
         elif not (modifiers & Qt.KeyboardModifier.ShiftModifier):
-            action = {Qt.Key.Key_Left: lambda: self._navigate(self.player.previous), Qt.Key.Key_Right: lambda: self._navigate(self.player.next),
-                Qt.Key.Key_Home: lambda: self._navigate(self.player.first), Qt.Key.Key_End: lambda: self._navigate(self.player.last),
-                Qt.Key.Key_Space: self.toggle_play, Qt.Key.Key_F: self.flip_board}.get(key)
+            navigation = self._keypad_navigation(event)
+            if navigation is not None:
+                action = lambda: self._navigate(navigation)
+            else:
+                action = {Qt.Key.Key_Left: lambda: self._navigate(self.player.previous), Qt.Key.Key_Right: lambda: self._navigate(self.player.next),
+                    Qt.Key.Key_Home: lambda: self._navigate(self.player.first), Qt.Key.Key_End: lambda: self._navigate(self.player.last),
+                    Qt.Key.Key_Space: self.toggle_play, Qt.Key.Key_F: self.flip_board}.get(key)
         if action is not None:
             if not event.isAutoRepeat():
                 action()
@@ -898,7 +926,7 @@ class MainWindow(QMainWindow):
                 break
 
     def _show_shortcuts(self):
-        QMessageBox.information(self, "Keyboard shortcuts", "Left / Right — Previous / next move\nHome / End — First / last position\nCtrl+Left / Ctrl+Right — Previous / next game\nSpace — Play / pause (outside Guess the Move)\nF — Flip board\nCtrl+O — Open PGN\nCtrl+G — Toggle Guess the Move\nCtrl++ / Ctrl+- — Increase / decrease notation font\nCtrl+0 — Reset notation font to 12 pt\n\nPlayback and notation-size shortcuts are inactive in text-entry fields.\nManual navigation pauses autoplay. Guess the Move stays active across games, positions and files until you toggle it off.")
+        QMessageBox.information(self, "Keyboard shortcuts", "Left / Right — Previous / next move\nHome / End — First / last position\nCtrl+Left / Ctrl+Right — Previous / next game\nNumpad 8 / 2 — Next / previous game\nNumpad 4 / 6 — Previous / next move\nNumpad 7 / 9 — First / last position\nMouse wheel over board: up / down — Previous / next move\nSpace — Play / pause (outside Guess the Move)\nF — Flip board\nCtrl+O — Open PGN\nCtrl+G — Toggle Guess the Move\nCtrl++ / Ctrl+- — Increase / decrease notation font\nCtrl+0 — Reset notation font to 12 pt\n\nNumpad navigation works with Num Lock on or off.\nPlayback and notation-size shortcuts are inactive in text-entry fields.\nManual navigation pauses autoplay. Guess the Move stays active across games, positions and files until you toggle it off.")
 
     def _about(self):
         QMessageBox.about(self, "About PGN Player", f"<b>PGN Player</b><p>Local chess playback and recorded-move training for Windows.</p><p>{escape(str(self.paths.edition).capitalize())} edition · No account or network required.</p><p>GPL-3.0-or-later. Built with Python, PySide6, python-chess and SQLite.</p>")

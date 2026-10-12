@@ -39,7 +39,8 @@ reputation-based security prompt may therefore appear on first launch or install
 2. Select a game in the Games panel. Search names, events, openings or ECO codes;
    narrow by result. The game number always refers to the original file.
 3. Use arrows or playback buttons to move through the game. Click notation to
-   jump directly to a mainline or variation position.
+   jump directly to a mainline or variation position. You can also use the
+   [mouse wheel and numeric keypad](#mouse-wheel-and-keypad-navigation).
 4. Press Space or Play for autoplay. Choose a move delay in the control bar.
    Automatic next-game continuation is enabled by default. Enable Loop playback
    beside it to repeat the current game, or the whole PGN when continuation is
@@ -79,6 +80,35 @@ This avoids scanning or hashing an unchanged PGN again. Games still load only
 when selected, with at most eight parsed games kept in memory. Loading a saved
 index uses a brief status message; full indexing progress appears only when an
 index must be built. Changed files and invalid indexes are rebuilt automatically.
+
+### Mouse wheel and keypad navigation
+
+With the pointer over the board squares, **scroll up for the previous move** or
+**scroll down for the next move**. Each standard wheel notch moves one ply
+(one player's move). Notation and the game list still scroll normally when the
+pointer is outside the board.
+
+Use the physical numeric keypad with **Num Lock on or off**:
+
+| Key | Action |
+| --- | --- |
+| Numpad 8 | Next game |
+| Numpad 2 | Previous game |
+| Numpad 4 | Previous move |
+| Numpad 6 | Next move |
+| Numpad 7 | Starting position of the current game |
+| Numpad 9 | Last position in the current line, including a selected variation |
+
+The regular number row keeps its normal behavior. Keypad navigation is inactive
+while typing in search boxes or editing other controls, and existing keyboard
+shortcuts still work.
+
+These controls use the same navigation as the playback buttons. Move navigation
+stops at the beginning or end of the current line; game navigation stops at the
+first or last game without wrapping. Manual navigation pauses autoplay; press
+Play or Space to resume when Guess the Move is off. Guess the Move stays active
+while navigating, preserving the selected side and variation setting while
+continuing to hide upcoming notation.
 
 ### Large-file testing
 
@@ -174,7 +204,7 @@ into a portable folder; the installer rejects this.
 ## Source and build
 
 See [build instructions](docs/BUILD.md), [architecture](docs/ARCHITECTURE.md), and
-[keyboard shortcuts](docs/SHORTCUTS.md). Run `scripts/test.ps1` for automated tests.
+[keyboard and mouse controls](docs/SHORTCUTS.md). Run `scripts/test.ps1` for automated tests.
 All automated UI checks use offscreen rendering and temporary user data.
 
 PGN Player is licensed under GPL-3.0-or-later. See LICENSE and
