@@ -37,7 +37,7 @@ DEFAULTS: dict[str, Any] = {
 
 SCHEMA_VERSION = 1
 APPLICATION_ID = 0x50474E50  # PGNP
-RECENT_FILE_LIMIT = 20
+RECENT_FILE_LIMIT = 10
 
 
 class StorageError(RuntimeError):
@@ -145,6 +145,16 @@ class SettingsStore:
                 db.rollback()
                 raise
         self._validate_schema()
+        # Apply the smaller history limit to existing profiles without touching
+        # preferences or saved positions. Normal opens need no write lock.
+        if db.execute("SELECT COUNT(*) FROM recent_files").fetchone()[0] > RECENT_FILE_LIMIT:
+            try:
+                with db:
+                    self._trim_recent_files()
+            except sqlite3.OperationalError:
+                # A read-only or busy store can still serve the newest ten.
+                # The next successful add also trims any older history.
+                pass
 
     def _backup_before_migration(self, version: int) -> None:
         # Online SQLite backup includes committed WAL state, unlike copying the
@@ -224,13 +234,23 @@ class SettingsStore:
                     "ON CONFLICT(file_key) DO UPDATE SET path=excluded.path,name=excluded.name,last_opened=excluded.last_opened",
                     (file_key, canonical, Path(canonical).name, time.time()),
                 )
-                self._db.execute(
-                    "DELETE FROM recent_files WHERE file_key NOT IN "
-                    "(SELECT file_key FROM recent_files ORDER BY last_opened DESC LIMIT ?)",
-                    (RECENT_FILE_LIMIT,),
-                )
+                self._trim_recent_files()
         except sqlite3.Error as exc:
             raise StorageError(f"Cannot save recent file: {exc}") from exc
+
+    def _trim_recent_files(self) -> None:
+        self._db.execute(
+            "DELETE FROM recent_files WHERE file_key NOT IN "
+            "(SELECT file_key FROM recent_files ORDER BY last_opened DESC LIMIT ?)",
+            (RECENT_FILE_LIMIT,),
+        )
+
+    def clear_recent_files(self) -> None:
+        try:
+            with self._db:
+                self._db.execute("DELETE FROM recent_files")
+        except sqlite3.Error as exc:
+            raise StorageError(f"Cannot clear recent files: {exc}") from exc
 
     def remove_recent(self, path: str | Path) -> None:
         file_key, _ = _file_identity(path)

@@ -61,6 +61,11 @@ Choose **File → Export current game…** to save the selected game as a separa
 PGN file, including its metadata, comments, and variations. The original PGN
 remains unchanged.
 
+**File → Recent files** remembers the 10 most recently opened PGNs. Choose
+**Clear Recent Files** in that menu to empty the list for this edition. Your PGN
+files, cached indexes, saved positions, and preferences are preserved.
+Opening a file adds it to the list again, including automatic reopening if enabled.
+
 The default move delay is two seconds and the between-game pause is one second.
 Comments, NAGs, variations, metadata and FEN starting positions are supported.
 Comments appear inline in the move list. View → Notation Font Size offers 10,

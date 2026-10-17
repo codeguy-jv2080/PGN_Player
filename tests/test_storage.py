@@ -1,3 +1,5 @@
+import itertools
+import os
 import sqlite3
 
 import pytest
@@ -149,7 +151,9 @@ def test_changed_file_does_not_restore_or_delete_old_resume(tmp_path):
         assert store.load_resume(pgn, "old")["game_index"] == 10
 
 
-def test_recent_files_deduplicate_order_bound_and_preserve_source(tmp_path):
+def test_recent_files_deduplicate_order_bound_and_preserve_source(tmp_path, monkeypatch):
+    ticks = itertools.count(100)
+    monkeypatch.setattr("pgn_player.storage.time.time", lambda: next(ticks))
     with SettingsStore(tmp_path / "state.sqlite3") as store:
         for index in range(23):
             store.add_recent(tmp_path / f"game{index}.pgn")
@@ -159,13 +163,128 @@ def test_recent_files_deduplicate_order_bound_and_preserve_source(tmp_path):
         store.add_recent(pgn)
         store.add_recent(pgn)
         recent = store.recent_files()
-        assert len(recent) == 20
+        assert len(recent) == 10
         assert recent[0]["path"] == str(pgn.resolve())
         assert recent[0]["name"] == "game4.pgn"
+        assert [entry["name"] for entry in recent] == ["game4.pgn"] + [f"game{index}.pgn" for index in range(22, 13, -1)]
+        assert store._db.execute("SELECT COUNT(*) FROM recent_files").fetchone()[0] == 10
         store.remove_recent(pgn)
-        assert len(store.recent_files()) == 19
+        assert len(store.recent_files()) == 9
         assert store.load_resume(pgn, "same") is not None
         assert pgn.read_text(encoding="utf-8") == "*"
+
+
+def test_opening_existing_twenty_entry_history_prunes_to_newest_ten_only(tmp_path):
+    db_path = tmp_path / "existing.sqlite3"
+    source = tmp_path / "game0.pgn"
+    with SettingsStore(db_path) as store:
+        store.set("theme", "dark")
+        store.set("last_file", str(source))
+        store.save_resume(source, "fingerprint", 3, [0, 1], "black")
+    with sqlite3.connect(db_path) as db:
+        settings = db.execute("SELECT * FROM settings ORDER BY key").fetchall()
+        resume = db.execute("SELECT * FROM resume_positions").fetchall()
+        schema = db.execute("PRAGMA user_version").fetchone()[0]
+        db.executemany("INSERT INTO recent_files(file_key,path,name,last_opened) VALUES(?,?,?,?)", [
+            (os.path.normcase(str(tmp_path / f"game{index}.pgn")), str(tmp_path / f"game{index}.pgn"),
+             f"game{index}.pgn", float(index)) for index in range(20)
+        ])
+    with SettingsStore(db_path) as store:
+        assert [entry["name"] for entry in store.recent_files()] == [f"game{index}.pgn" for index in range(19, 9, -1)]
+    with sqlite3.connect(db_path) as db:
+        assert db.execute("SELECT COUNT(*) FROM recent_files").fetchone()[0] == 10
+        assert db.execute("SELECT * FROM settings ORDER BY key").fetchall() == settings
+        assert db.execute("SELECT * FROM resume_positions").fetchall() == resume
+        assert db.execute("PRAGMA user_version").fetchone()[0] == schema
+    assert not list(tmp_path.glob("*.bak"))
+
+
+def test_existing_overflow_history_opens_when_pruning_is_write_locked(tmp_path):
+    db_path = tmp_path / "existing-locked.sqlite3"
+    with SettingsStore(db_path):
+        pass
+    with sqlite3.connect(db_path) as db:
+        db.executemany("INSERT INTO recent_files(file_key,path,name,last_opened) VALUES(?,?,?,?)", [
+            (f"file-{index}", str(tmp_path / f"game{index}.pgn"), f"game{index}.pgn", float(index))
+            for index in range(20)
+        ])
+    locker = sqlite3.connect(db_path)
+    try:
+        locker.execute("BEGIN IMMEDIATE")
+        with SettingsStore(db_path, timeout=.01) as store:
+            assert [entry["name"] for entry in store.recent_files()] == [f"game{index}.pgn" for index in range(19, 9, -1)]
+            assert store._db.execute("SELECT COUNT(*) FROM recent_files").fetchone()[0] == 20
+    finally:
+        locker.rollback()
+        locker.close()
+    with SettingsStore(db_path) as store:
+        assert store._db.execute("SELECT COUNT(*) FROM recent_files").fetchone()[0] == 10
+
+
+def test_clear_recent_files_persists_and_preserves_pgn_cache_preferences_and_resume(tmp_path):
+    from pgn_player.pgn_loader import open_pgn
+
+    source = tmp_path / "study.pgn"
+    source.write_text('[Event "Study"]\n\n1. e4 e5 *\n', encoding="utf-8")
+    cache = tmp_path / "pgn-index-cache.sqlite3"
+    collection = open_pgn(source, cache_path=cache)
+    source_bytes, cache_bytes = source.read_bytes(), cache.read_bytes()
+    db_path = tmp_path / "state.sqlite3"
+    with SettingsStore(db_path) as store:
+        store.set("theme", "dark")
+        store.set("reopen_last", True)
+        store.set("last_file", str(source))
+        store.save_resume(source, collection.fingerprint, 0, [0], "black")
+        store.add_recent(source)
+        store.add_recent(tmp_path / "another.pgn")
+        preferences = store.get_settings()
+        resume = store.load_resume(source, collection.fingerprint)
+        store.clear_recent_files()
+        assert store.recent_files() == []
+        assert store._db.execute("SELECT COUNT(*) FROM recent_files").fetchone()[0] == 0
+    with SettingsStore(db_path) as store:
+        assert store.recent_files() == []
+        assert store.get_settings() == preferences
+        assert store.get("last_file") == str(source)
+        assert store.load_resume(source, collection.fingerprint) == resume
+        store.clear_recent_files()  # Clearing an empty list is harmless.
+    assert source.read_bytes() == source_bytes
+    assert cache.read_bytes() == cache_bytes
+
+
+def test_clear_recent_files_rolls_back_if_a_delete_fails(tmp_path):
+    with SettingsStore(tmp_path / "state.sqlite3") as store:
+        for index in range(3):
+            store.add_recent(tmp_path / f"game{index}.pgn")
+        recent = store.recent_files()
+        with store._db:
+            store._db.execute("CREATE TRIGGER reject_recent_delete BEFORE DELETE ON recent_files "
+                              "WHEN old.name='game1.pgn' BEGIN SELECT RAISE(FAIL, 'delete blocked'); END")
+        with pytest.raises(StorageError, match="delete blocked"):
+            store.clear_recent_files()
+        assert store.recent_files() == recent
+        assert store._db.execute("SELECT COUNT(*) FROM recent_files").fetchone()[0] == 3
+
+
+def test_clear_recent_files_does_not_affect_other_edition(tmp_path, monkeypatch):
+    from pgn_player.paths import resolve_paths
+
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "local-app-data"))
+    portable = resolve_paths("portable", app_dir=tmp_path / "application")
+    installed = resolve_paths("installed", app_dir=tmp_path / "application")
+    source = tmp_path / "shared.pgn"
+    for paths in (portable, installed):
+        with SettingsStore(paths.db_path) as store:
+            store.add_recent(source)
+            store.save_resume(source, "same", 0, [0], "white")
+    with SettingsStore(portable.db_path) as store:
+        store.clear_recent_files()
+        assert store.load_resume(source, "same") is not None
+    with SettingsStore(portable.db_path) as store:
+        assert store.recent_files() == []
+    with SettingsStore(installed.db_path) as store:
+        assert [entry["path"] for entry in store.recent_files()] == [str(source)]
+        assert store.load_resume(source, "same") is not None
 
 
 @pytest.mark.parametrize("key,value", [

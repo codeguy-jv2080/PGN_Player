@@ -278,6 +278,8 @@ class MainWindow(QMainWindow):
         file_menu.addAction(self.open_action)
         self.recent_menu = file_menu.addMenu("Recent files")
         self.recent_menu.aboutToShow.connect(self._populate_recent)
+        self.clear_recent_action = QAction("Clear Recent Files", self)
+        self.clear_recent_action.triggered.connect(self._clear_recent_files)
         self.export_action = QAction("Export current game…", self)
         self.export_action.triggered.connect(self.export_game)
         file_menu.addAction(self.export_action)
@@ -365,14 +367,37 @@ class MainWindow(QMainWindow):
 
     def _populate_recent(self):
         self.recent_menu.clear()
-        for entry in self.store.recent_files():
+        try:
+            entries = self.store.recent_files()
+        except Exception as exc:
+            self._error(f"Could not read recent files: {exc}")
+            action = self.recent_menu.addAction("Recent files unavailable")
+            action.setEnabled(False)
+            self.recent_menu.addSeparator()
+            self.clear_recent_action.setEnabled(False)
+            self.recent_menu.addAction(self.clear_recent_action)
+            return False
+        for entry in entries:
             path = entry["path"]
             action = self.recent_menu.addAction(entry["name"])
             action.setToolTip(path)
             action.triggered.connect(lambda checked=False, path=path: self.open_file(path))
-        if self.recent_menu.isEmpty():
+        if not entries:
             action = self.recent_menu.addAction("No recent files")
             action.setEnabled(False)
+        self.recent_menu.addSeparator()
+        self.clear_recent_action.setEnabled(bool(entries))
+        self.recent_menu.addAction(self.clear_recent_action)
+        return True
+
+    def _clear_recent_files(self):
+        try:
+            self.store.clear_recent_files()
+        except Exception as exc:
+            self._error(f"Could not clear recent files: {exc}")
+            return
+        if self._populate_recent():
+            self.statusBar().showMessage("Recent files cleared.")
 
     def choose_file(self):
         self._pause_playback()
