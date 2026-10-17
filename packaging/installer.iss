@@ -1,5 +1,5 @@
 #define AppName "PGN Player"
-#define AppVersion "1.0.4"
+#define AppVersion "1.0.5"
 #ifndef SourceRoot
   #define SourceRoot ".."
 #endif

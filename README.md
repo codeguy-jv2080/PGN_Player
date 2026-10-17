@@ -142,6 +142,11 @@ after you turn training off.
 
 ### Variations and playback
 
+Variations appear on separate, indented lines, with nested alternatives indented
+further and the main line resuming at its original margin. Main-line moves stay
+bold; variation moves use regular text and comments retain their muted color.
+All use your selected notation font size. Click any move to navigate as before.
+
 Mainline playback is the default. With Loop off, playing from a manually selected
 variation follows that branch and stops at its end. Return to main line restores the
 mainline at the corresponding depth. Optional all-variation playback visits

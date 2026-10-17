@@ -64,8 +64,7 @@ class NotationWidget(QTextBrowser):
             nags = "" if training else "".join(escape(NAGS.get(nag, f" ${nag}")) for nag in sorted(node.nags))
             selected = node is current
             variation = any(path)
-            style = (' style="background:#007BFF;color:#FFFFFF;"' if selected else
-                     f' style="color:{colors["muted"]};"' if variation else "")
+            style = ' style="background:#007BFF;color:#FFFFFF;"' if selected else ""
             anchor = '<a name="current"></a>' if selected else ""
             link = ".".join(map(str, path))
             move_text = f"{san}{nags}" if variation else f"<b>{san}{nags}</b>"
@@ -87,26 +86,41 @@ class NotationWidget(QTextBrowser):
             if game.comment:
                 chunks.append(f'<p class="comment">{escape(game.comment)}</p>')
 
-            def line(node, path, first=True, depth=0):
+            def paragraph(parts, depth):
+                if parts:
+                    # Keep room for text even in narrow panes with deep nesting.
+                    indent = min(depth, 6) * 18
+                    spacing = 'line-height:1.3;' if depth else ''
+                    chunks.append(f'<p style="margin-top:2px;margin-bottom:2px;margin-left:{indent}px;{spacing}">')
+                    chunks.extend(parts)
+                    chunks.append('</p>')
+
+            # Suspend each line while its alternatives are rendered, then resume
+            # it in a new paragraph at the original indentation. An explicit
+            # stack avoids truncating deeply nested PGN branches.
+            pending = [(game.variations[0], (0,), True, 0, [])] if game.variations else []
+            while pending:
+                node, path, first, depth, parts = pending.pop()
                 while node is not None:
                     if node.starting_comment:
-                        chunks.append(f'<span class="comment">{{{escape(node.starting_comment)}}}</span> ')
-                    chunks.append(move_html(node, path, first))
+                        parts.append(f'<span class="comment">{{{escape(node.starting_comment)}}}</span> ')
+                    parts.append(move_html(node, path, first))
                     parent = node.parent
-                    if path[-1] == 0:
-                        for index, variation in enumerate(parent.variations[1:], 1):
-                            chunks.append('<span class="variation">&nbsp;( ')
-                            if depth < 60:
-                                line(variation, path[:-1] + (index,), True, depth + 1)
-                            else:
-                                chunks.append("[deeper variation]")
-                            chunks.append(' )&nbsp;</span>&nbsp;')
-                    first = path[-1] == 0 and len(parent.variations) > 1
-                    node = node.variations[0] if node.variations else None
+                    following = node.variations[0] if node.variations else None
+                    if path[-1] == 0 and len(parent.variations) > 1:
+                        paragraph(parts, depth)
+                        pending.append((following, path + (0,), True, depth, []))
+                        for index in range(len(parent.variations) - 1, 0, -1):
+                            pending.append((parent.variations[index], path[:-1] + (index,),
+                                            True, depth + 1, ['<span class="variation">( </span>']))
+                        break
+                    first = False
+                    node = following
                     path += (0,)
-
-            if game.variations:
-                line(game.variations[0], (0,))
+                else:
+                    if depth:
+                        parts.append('<span class="variation"> )</span>')
+                    paragraph(parts, depth)
             chunks.append(f'<p class="comment">{escape(game.headers.get("Result", "*"))}</p>')
         chunks.append("</body></html>")
         self.setHtml("".join(chunks))
