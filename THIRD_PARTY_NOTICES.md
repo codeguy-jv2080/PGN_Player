@@ -3,6 +3,18 @@
 PGN Player is distributed under GPL-3.0-or-later; see LICENSE. The application
 icon is original artwork supplied with this source under the same license.
 
+- Recorded move/capture sounds: **Chess Pieces Move (Close)** by JJTaynos,
+  published April 29, 2024 on Freesound under CC0 1.0 Universal:
+  https://freesound.org/people/JJTaynos/sounds/733927/
+  The author recorded chess pieces moving on a board. The bundled WAVs are
+  excerpts from the openly available HQ MP3 preview, converted to mono PCM,
+  level-adjusted, with tiny fades at the clip edges. Each excerpt retains the
+  selected hit and its natural decay. The original gated WAV download was
+  not used. License: https://creativecommons.org/publicdomain/zero/1.0/
+  The legal text is included in `licenses/CC0-1.0.txt`. Source audio, checksums,
+  and conversion details are in `scripts/sound_sources/`; final WAVs can be
+  reproduced offline with `scripts/generate_sounds.py`.
+
 - python-chess 1.11.2, copyright Niklas Fiekas and contributors: GPL-3.0-or-later.
   Source: https://github.com/niklasf/python-chess/tree/v1.11.2
 - Chess piece SVG artwork: Colin M. L. Burnett. The python-chess piece set is

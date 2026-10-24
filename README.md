@@ -57,6 +57,13 @@ reputation-based security prompt may therefore appear on first launch or install
 **1–8** labels around the board. Coordinates are shown by default, and each
 edition remembers your choice. The board size and notation sidebar stay as they are.
 
+**View → Sound** enables recorded chess-piece sounds, with a distinct sound for captures.
+Sound is off by default, and each edition remembers its own setting.
+Sounds accompany forward moves in manual
+navigation, autoplay, and Guess the Move. Loading games, rewinding, manual jumps
+over moves, and incorrect guesses are silent. You can turn sound on or off during
+playback without pausing it.
+
 Choose **File → Export current game…** to save the selected game as a separate
 PGN file, including its metadata, comments, and variations. The original PGN
 remains unchanged.

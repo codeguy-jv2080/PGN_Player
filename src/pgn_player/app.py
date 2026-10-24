@@ -53,6 +53,17 @@ def _smoke_test(app, output: Path) -> int:
                 '[Result "*"]\n\n1. d4 d5 2. c4 e6 *\n', encoding="utf-8"
             )
             window = MainWindow(store, paths)
+            assert not window.move_sounds.enabled, "Sound should start off"
+            assert not window.sound_action.isChecked(), "Sound menu should start unchecked"
+            for sound_name in ("move.wav", "capture.wav"):
+                sound_path = Path(__file__).parent / "assets" / sound_name
+                assert sound_path.read_bytes()[:4] == b"RIFF", f"Missing packaged sound: {sound_name}"
+            if sys.platform == "win32":
+                from pgn_player.sound import _load_backend
+                # Check native bindings without opening a device or playing audio.
+                backend = _load_backend()
+                assert backend is not None, "Native sound backend is unavailable"
+                assert callable(backend.waveOutOpen) and callable(backend.waveOutWrite)
             window.show()
             window.open_file(fixture)
             deadline = time.monotonic() + 30
@@ -77,6 +88,8 @@ def _smoke_test(app, output: Path) -> int:
             assert window.board.coordinates_visible, "Coordinates should start visible"
             window.coordinates_action.trigger()
             assert not window.board.coordinates_visible, "Coordinates did not hide"
+            window.sound_action.trigger()
+            assert window.move_sounds.enabled, "Sound menu did not enable sound"
             # Recreate the window so this proves persistent SQLite reuse rather
             # than the same-window optimization that shares a loaded index.
             window.close()
@@ -86,6 +99,9 @@ def _smoke_test(app, output: Path) -> int:
             window.show()
             assert window.notation_panel.isHidden(), "Notation visibility was not remembered"
             assert not window.board.coordinates_visible, "Coordinate visibility was not remembered"
+            assert window.move_sounds.enabled and window.sound_action.isChecked(), "Sound was not remembered"
+            window.sound_action.trigger()
+            assert not window.move_sounds.enabled, "Sound menu did not mute sound"
             window.coordinates_action.trigger()
             assert window.board.coordinates_visible, "View menu did not restore coordinates"
             window.notation_action.trigger()
@@ -119,7 +135,7 @@ def _smoke_test(app, output: Path) -> int:
             assert window.grab().save(str(dark)), "Cannot render dark UI"
             window.close()
             app.processEvents()
-            result.update(ok=True, games=2, checks=["launch", "open", "board", "navigation", "notation_visibility", "board_coordinates", "saved_index", "themes", "close"])
+            result.update(ok=True, games=2, checks=["launch", "open", "board", "navigation", "notation_visibility", "board_coordinates", "sound", "saved_index", "themes", "close"])
         except Exception:
             result["error"] = traceback.format_exc()
         finally:

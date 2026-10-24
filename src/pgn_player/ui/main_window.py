@@ -20,6 +20,7 @@ from ..autoplay import AutoplayController
 from ..guess_move import GuessMoveController
 from ..pgn_loader import CachedIndexError, IndexingCancelled, index_pgn, open_pgn
 from ..playback import PlaybackController
+from ..sound import MoveSounds
 from ..storage import DEFAULT_NOTATION_FONT_SIZE, NOTATION_FONT_SIZES
 from .board import BoardWidget
 from .game_list import GameListWidget
@@ -66,6 +67,7 @@ class MainWindow(QMainWindow):
         self.player = PlaybackController()
         self.autoplay = AutoplayController(self.player)
         self.guess = GuessMoveController(self.player)
+        self.move_sounds = MoveSounds()
         self._worker = None
         self._loading = False
         self._closing = False
@@ -306,6 +308,11 @@ class MainWindow(QMainWindow):
         self.notation_action.setChecked(self.settings["notation_visible"])
         self.notation_action.triggered.connect(self._set_notation_visible)
         view_menu.addAction(self.notation_action)
+        self.sound_action = QAction("Sound", self)
+        self.sound_action.setCheckable(True)
+        self.sound_action.setChecked(self.settings["sound_enabled"])
+        self.sound_action.triggered.connect(self._set_sound_enabled)
+        view_menu.addAction(self.sound_action)
         view_menu.addSeparator()
         self.notation_font_menu = view_menu.addMenu("Notation Font Size")
         self.notation_font_group = QActionGroup(self)
@@ -351,6 +358,7 @@ class MainWindow(QMainWindow):
         self._set_notation_visible(self.settings["notation_visible"])
 
     def _apply_settings(self):
+        self.move_sounds.set_enabled(self.settings["sound_enabled"])
         self.board.coordinates_visible = self.settings["board_coordinates_visible"]
         self.board.update()
         self.notation.set_font_size(self.settings["notation_font_size"])
@@ -561,8 +569,13 @@ class MainWindow(QMainWindow):
         if self._loading:
             return
         self._pause_playback()
+        previous_game, previous_index, previous_node = self.player.game, self.player.game_index, self.player.node
         try:
             callback()
+            node = self.player.node
+            if (self.player.game is previous_game and self.player.game_index == previous_index
+                    and node is not None and node.parent is previous_node):
+                self._play_move_sound()
         except CachedIndexError:
             self.open_file(self.player.collection.path, use_cache=False)
         except Exception as exc:
@@ -655,7 +668,8 @@ class MainWindow(QMainWindow):
         if not self.autoplay.playing or self._loading or self._closing:
             return
         try:
-            self.autoplay.step()
+            if self.autoplay.step() == "move":
+                self._play_move_sound()
             self._refresh()
             if self.autoplay.playing:
                 self._play_timer.start(max(1, int(self.autoplay.next_delay * 1000)))
@@ -667,6 +681,24 @@ class MainWindow(QMainWindow):
             self.autoplay.pause()
             self._error(f"Playback stopped: {exc}")
             self._refresh_controls()
+
+    def _set_sound_enabled(self, enabled):
+        self.move_sounds.set_enabled(enabled)
+        self.sound_action.setChecked(enabled)
+        self._save_setting("sound_enabled", enabled)
+
+    def _play_move_sound(self):
+        node = self.player.node
+        if not self.move_sounds.enabled or node is None or node.parent is None or not node.move:
+            return
+        try:
+            # Use the move's own starting position, including when autoplay
+            # switches variation branches. This also recognizes en passant.
+            capture = node.parent.board().is_capture(node.move)
+            self.move_sounds.play(capture=capture)
+        except Exception:
+            # Optional audio must never interrupt navigation or training.
+            pass
 
     def _speed_changed(self, value):
         self._save_setting("delay_seconds", value)
@@ -804,7 +836,8 @@ class MainWindow(QMainWindow):
         if QApplication.activeModalWidget() is not None:
             self._schedule_opponent()
             return
-        self.guess.play_opponent()
+        if self.guess.play_opponent():
+            self._play_move_sound()
         self._refresh()
         self._schedule_opponent()
 
@@ -825,6 +858,7 @@ class MainWindow(QMainWindow):
             move = candidates[choices.index(chosen)]
         result = self.guess.submit(move)
         if result.status == "correct":
+            self._play_move_sound()
             self.guess_feedback.setText(f"Correct — {result.played_san}.")
         elif result.status == "incorrect":
             self.guess_feedback.setText(f"{result.played_san} does not match. The recorded move is {result.expected_san}.")
@@ -834,7 +868,8 @@ class MainWindow(QMainWindow):
         self._schedule_opponent()
 
     def _continue_guess(self):
-        self.guess.continue_recorded()
+        if self.guess.continue_recorded():
+            self._play_move_sound()
         self.guess_feedback.setText("Continue by guessing the next recorded move.")
         self._refresh()
         self._schedule_opponent()
@@ -958,6 +993,7 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event):
         self._closing = True
+        self.move_sounds.stop()
         self._pending_open = None
         self._stop_modes()
         self._save_timer.stop()
