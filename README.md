@@ -6,6 +6,20 @@ recorded moves for White, Black, or both sides.
 
 ![PGN Player showing the chessboard, move notation, and game list](docs/images/game-list.png)
 
+**Resize the panes:** Hover your mouse between the board and notation to
+highlight the divider, then drag left or right. To resize the game list, hover
+just above its search box to highlight the horizontal divider, then drag up or
+down. The board automatically scales to the available space.
+
+**More room for the board:** A narrow notation pane with the game list hidden.
+
+![PGN Player with a large board, narrow notation pane, and highlighted vertical resize divider](docs/images/resizable-board-notation.png)
+
+**More room for the game list:** An expanded game list with the horizontal resize
+divider highlighted above its search box.
+
+![PGN Player with an expanded game list and highlighted horizontal resize divider](docs/images/resizable-game-list.png)
+
 ## Demo
 
 [![Watch the PGN Player demo on YouTube](https://img.youtube.com/vi/f0BgU_3JqvU/hqdefault.jpg)](https://youtu.be/f0BgU_3JqvU)
