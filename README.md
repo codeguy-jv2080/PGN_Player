@@ -47,6 +47,28 @@ service, telemetry, embedded browser or chess-engine download dependency.
 The current Windows builds are not code-signed. Windows SmartScreen or another
 reputation-based security prompt may therefore appear on first launch or install.
 
+## What's new
+
+Since the first release, PGN Player has added:
+
+- **Chess-piece sounds** — move sounds and distinct capture sounds. Enable them
+  through **View → Sound**.
+- **Mouse-wheel navigation** — hover over the board and scroll down to advance
+  or up to go back.
+- **Numeric keypad controls** — navigate moves, switch games, and jump to the
+  beginning or end.
+- **Refreshed board and themes** — a classic brown chessboard with improved
+  light and dark interface colors.
+- **Hide/show notation** — hide the sidebar to give the board more room without
+  interrupting playback or training.
+- **Optional board coordinates** — show or hide the file letters and rank numbers.
+- **Clearer variations** — alternative lines now appear separately with
+  indentation, making them easier to follow.
+- **Clear Recent Files** — clear the recent-file list without deleting your PGNs
+  or settings.
+
+For the full version history, see [GitHub Releases](https://github.com/codeguy-jv2080/PGN_Player/releases).
+
 ## Using the player
 
 1. Open a `.pgn` using File → Open, Ctrl+O, or drag a file onto the window.
