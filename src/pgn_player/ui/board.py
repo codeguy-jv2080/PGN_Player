@@ -121,6 +121,14 @@ class BoardWidget(QWidget):
         self._wheel_delta = 0
         super().leaveEvent(event)
 
+    def _is_castling_target(self, origin, destination):
+        if not self.board.chess960 or origin is None or destination is None:
+            return False
+        # Chess960 encodes castling as king-to-own-rook. Only a legal castle
+        # may bypass ordinary friendly-piece selection and target rejection.
+        move = chess.Move(origin, destination)
+        return self.board.is_castling(move) and self.board.is_legal(move)
+
     def mousePressEvent(self, event):
         if not self.input_enabled or event.button() != Qt.MouseButton.LeftButton:
             return
@@ -129,7 +137,8 @@ class BoardWidget(QWidget):
         self._press_point = event.position()
         if square is not None:
             piece = self.board.piece_at(square)
-            if piece and piece.color == self.board.turn:
+            if (piece and piece.color == self.board.turn
+                    and not self._is_castling_target(self.selected, square)):
                 self.selected = square
         self.update()
 
@@ -148,7 +157,8 @@ class BoardWidget(QWidget):
         self._press_point = None
         if origin is not None and destination is not None and origin != destination:
             target = self.board.piece_at(destination)
-            if not target or target.color != self.board.turn:
+            if (not target or target.color != self.board.turn
+                    or self._is_castling_target(origin, destination)):
                 self.selected = None
                 self.move_requested.emit(origin, destination)
         self.update()

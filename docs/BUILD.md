@@ -53,6 +53,46 @@ archives, compiles the installer, and runs the portable executable offscreen.
 All smoke tests use temporary databases. The installer is compiled, not installed
 onto the developer's Windows profile by the test procedure.
 
+The synthetic tests cover game boundaries without blank-line separators,
+unclosed variation recovery, and unambiguous blank lines inside movetext:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_pgn_recovery.py tests/test_pgn_recovery_cache.py tests/test_pgn_recovery_lookahead.py --basetemp=.build/recovery-tests
+```
+
+These include nested variations, comment/tag decoys, annotations, all result
+markers, missing results, FEN and Chess960 starts, cancellation, unchanged source
+bytes, encoded seek offsets, cache/resume migration, and linear-work checks for
+long malformed collections and repeated blank lines. Index tests forbid game
+tree construction, and unchanged-cache tests forbid PGN source reads. Ambiguous
+unnumbered continuations retain a boundary and a diagnostic; the parser does
+not guess whether two plausible headerless games were intended to be one.
+
+To also run the regression against the original, unmodified `WorldChamp2018.pgn`,
+set its location for the test process (replace the example path):
+
+```powershell
+$env:PGN_PLAYER_BOUNDARY_PGN = 'C:\PGNs\WorldChamp2018.pgn'
+.\.venv\Scripts\python.exe -m pytest tests/test_pgn_boundaries_original.py
+```
+
+That optional regression checks all 15 games and 1,528 moves and verifies the
+source bytes remain unchanged. It skips when the variable is unset. The original
+file and its private location are not included in source or release packages.
+
+The Chess960 audit includes synthetic castling/input tests and an optional
+regression against the original `Chess960_10_Great_Games.pgn`:
+
+```powershell
+$env:PGN_PLAYER_CHESS960_PGN = 'C:\PGNs\Chess960_10_Great_Games.pgn'
+.\.venv\Scripts\python.exe -m pytest tests/test_chess960_core.py tests/test_chess960_ui.py tests/test_chess960_original.py --basetemp=.build/chess960-tests
+```
+
+The original-file tests verify all 10 games, 864 plies, 14 castlings, and
+application export/reimport without changing the source file. They skip when
+the variable is unset. See [the compatibility audit](CHESS960_AUDIT.md) for
+coverage and limitations. The original collection is not bundled.
+
 The compiler runs with a restricted dependency search path containing Python
 and Windows system directories. This prevents unrelated tools on the host's
 PATH from contributing incompatible DLLs to a release.

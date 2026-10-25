@@ -32,9 +32,11 @@ SCHEMA_VERSION = 1
 BATCH_SIZE = 2048
 _HEADER_NAME_LIMIT = 1024
 _HEADER_NAME_MAX_LENGTH = 128
+PGN_BOUNDARY_ID = "tag-boundaries-v1"
+PGN_RECOVERY_ID = "movetext-recovery-v1"
 RUNTIME_ID = (
     f"{sys.implementation.name}-{sys.version_info.major}.{sys.version_info.minor}"
-    f";chess-{chess.__version__};text-cookie-v1;newline-universal;errors-replace"
+    f";chess-{chess.__version__};text-cookie-v1;newline-universal;errors-replace;{PGN_BOUNDARY_ID};{PGN_RECOVERY_ID}"
 )
 _HEX_DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 _DECIMAL = re.compile(r"(?:0|[1-9][0-9]*)\Z")
