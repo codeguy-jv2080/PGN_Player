@@ -11,6 +11,7 @@ import json
 import math
 import os
 from pathlib import Path
+import re
 import sqlite3
 import time
 from typing import Any, Sequence
@@ -36,9 +37,10 @@ DEFAULTS: dict[str, Any] = {
     "guess_variations": False,
 }
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 APPLICATION_ID = 0x50474E50  # PGNP
 RECENT_FILE_LIMIT = 10
+_GAME_DIGEST = re.compile(r"[0-9a-f]{64}\Z")
 
 
 class StorageError(RuntimeError):
@@ -121,10 +123,19 @@ class SettingsStore:
         if version > SCHEMA_VERSION:
             raise StorageError("This database was created by a newer PGN Player. Update the application to open it.")
         if version < SCHEMA_VERSION:
+            if version == 1:
+                # Refuse an unsupported old schema before changing its version
+                # or columns. A migration must preserve every existing row.
+                self._validate_schema(legacy=True)
             if existed:
                 self._backup_before_migration(version)
             try:
                 db.execute("BEGIN IMMEDIATE")
+                # Another instance may have completed this additive migration
+                # while our backup was running or we waited for the write lock.
+                version = db.execute("PRAGMA user_version").fetchone()[0]
+                if version > SCHEMA_VERSION:
+                    raise StorageError("This database was created by a newer PGN Player. Update the application to open it.")
                 # Version zero is an empty, uninitialized database. Every future
                 # migration must be added here and remain inside this transaction.
                 if version == 0:
@@ -136,9 +147,12 @@ class SettingsStore:
                         "name TEXT NOT NULL, last_opened REAL NOT NULL)",
                         "CREATE TABLE resume_positions (file_key TEXT PRIMARY KEY, path TEXT NOT NULL, "
                         "fingerprint TEXT NOT NULL, game_index INTEGER NOT NULL CHECK(game_index >= 0), "
-                        "variation_path TEXT NOT NULL, orientation TEXT NOT NULL, updated_at REAL NOT NULL)",
+                        "variation_path TEXT NOT NULL, orientation TEXT NOT NULL, updated_at REAL NOT NULL, "
+                        "game_digest TEXT)",
                     ):
                         db.execute(sql)
+                elif version == 1:
+                    db.execute("ALTER TABLE resume_positions ADD COLUMN game_digest TEXT")
                 db.execute(f"PRAGMA application_id={APPLICATION_ID}")
                 db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
                 db.commit()
@@ -171,12 +185,14 @@ class SettingsStore:
             if target is not None:
                 target.close()
 
-    def _validate_schema(self) -> None:
+    def _validate_schema(self, *, legacy: bool = False) -> None:
         expected = {
             "settings": {"key", "value"},
             "recent_files": {"file_key", "path", "name", "last_opened"},
             "resume_positions": {"file_key", "path", "fingerprint", "game_index", "variation_path", "orientation", "updated_at"},
         }
+        if not legacy:
+            expected["resume_positions"].add("game_digest")
         for table, columns in expected.items():
             actual = {row[1] for row in self._db.execute(f"PRAGMA table_info({table})")}
             if not columns.issubset(actual):
@@ -268,6 +284,8 @@ class SettingsStore:
         game_index: int,
         variation_path: Sequence[int],
         orientation: str,
+        *,
+        game_digest: str | None = None,
     ) -> None:
         if type(game_index) is not int or game_index < 0:
             raise ValueError("Resume game index must be a non-negative integer.")
@@ -276,16 +294,20 @@ class SettingsStore:
             raise ValueError("Resume variation path must contain non-negative integers.")
         if not _valid_preference("orientation", orientation):
             raise ValueError("Resume orientation must be white or black.")
+        if game_digest is not None and (
+            not isinstance(game_digest, str) or _GAME_DIGEST.fullmatch(game_digest) is None
+        ):
+            raise ValueError("Resume game digest must be a lowercase SHA-256 digest or None.")
         file_key, canonical = _file_identity(path)
         encoded_fingerprint, encoded_route = _encode(fingerprint), _encode(route)
         try:
             with self._db:
                 self._db.execute(
-                    "INSERT INTO resume_positions(file_key,path,fingerprint,game_index,variation_path,orientation,updated_at) "
-                    "VALUES(?,?,?,?,?,?,?) ON CONFLICT(file_key) DO UPDATE SET path=excluded.path,"
+                    "INSERT INTO resume_positions(file_key,path,fingerprint,game_index,variation_path,orientation,updated_at,game_digest) "
+                    "VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(file_key) DO UPDATE SET path=excluded.path,"
                     "fingerprint=excluded.fingerprint,game_index=excluded.game_index,variation_path=excluded.variation_path,"
-                    "orientation=excluded.orientation,updated_at=excluded.updated_at",
-                    (file_key, canonical, encoded_fingerprint, game_index, encoded_route, orientation, time.time()),
+                    "orientation=excluded.orientation,updated_at=excluded.updated_at,game_digest=excluded.game_digest",
+                    (file_key, canonical, encoded_fingerprint, game_index, encoded_route, orientation, time.time(), game_digest),
                 )
         except sqlite3.Error as exc:
             raise StorageError(f"Cannot save playback position: {exc}") from exc
@@ -294,7 +316,7 @@ class SettingsStore:
         file_key, _ = _file_identity(path)
         try:
             row = self._db.execute(
-                "SELECT path,fingerprint,game_index,variation_path,orientation,updated_at FROM resume_positions "
+                "SELECT path,fingerprint,game_index,variation_path,orientation,updated_at,game_digest FROM resume_positions "
                 "WHERE file_key=? AND fingerprint=?", (file_key, _encode(fingerprint)),
             ).fetchone()
             if row is None:
@@ -307,6 +329,11 @@ class SettingsStore:
                 if type(result["game_index"]) is not int or result["game_index"] < 0:
                     return None
                 if not _valid_preference("orientation", result["orientation"]):
+                    return None
+                digest = result["game_digest"]
+                if digest is not None and (
+                    not isinstance(digest, str) or _GAME_DIGEST.fullmatch(digest) is None
+                ):
                     return None
                 result["variation_path"] = route
                 result["fingerprint"] = json.loads(result["fingerprint"])

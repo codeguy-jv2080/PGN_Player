@@ -22,13 +22,14 @@ import uuid
 import chess
 
 from .models import GameInfo
+from .source_validation import source_sample
 
 if TYPE_CHECKING:
     from .pgn_loader import GameCollection
 
 
 APPLICATION_ID = 0x50474E49  # PGNI; deliberately distinct from preferences.
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 BATCH_SIZE = 2048
 _HEADER_NAME_LIMIT = 1024
 _HEADER_NAME_MAX_LENGTH = 128
@@ -47,6 +48,7 @@ _SCHEMA = {
         ("encoding", "TEXT", 0), ("fingerprint", "TEXT", 0),
         ("game_count", "INTEGER", 0), ("runtime_id", "TEXT", 0),
         ("index_checksum", "TEXT", 0),
+        ("source_sample", "TEXT", 0), ("end_offset", "TEXT", 0),
     ],
     "entries": [
         ("collection_id", "INTEGER", 1), ("ordinal", "INTEGER", 2),
@@ -64,6 +66,8 @@ class CachedIndex:
     entries: list[GameInfo]
     fingerprint: str
     encoding: str
+    source_sample: str | None = None
+    end_offset: int | None = None
 
 
 class _Cancellation:
@@ -125,6 +129,12 @@ def _checksum_row(digest, ordinal: int, cookie: str, headers: str) -> None:
         digest.update(str(len(encoded)).encode("ascii"))
         digest.update(b":")
         digest.update(encoded)
+
+
+def _checksum_end(digest, cookie: str) -> None:
+    # Bind the final game's boundary as well as each game's starting cookie.
+    # Cookies remain opaque decimal text, even beyond SQLite's integer range.
+    digest.update(f"\0end_offset:{len(cookie)}:{cookie}".encode("ascii"))
 
 
 def _valid_digest(value: object) -> bool:
@@ -199,6 +209,16 @@ class IndexCache:
         ):
             # In particular, never treat the application's settings DB as cache.
             return False
+        if write and application_id == APPLICATION_ID and version == 1:
+            # Retain other files' old indexes until each is next opened. A NULL
+            # sample is a miss: current bytes cannot prove an old cache's origin.
+            legacy = dict(_SCHEMA, collections=_SCHEMA["collections"][:-2])
+            if all([(row[1], row[2], row[5]) for row in db.execute(f"PRAGMA table_info({table})")] == expected
+                   for table, expected in legacy.items()):
+                db.execute("ALTER TABLE collections ADD COLUMN source_sample TEXT")
+                db.execute("ALTER TABLE collections ADD COLUMN end_offset TEXT")
+                db.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
+                version = SCHEMA_VERSION
         valid = application_id == APPLICATION_ID and version == SCHEMA_VERSION
         if valid:
             for table, expected in _SCHEMA.items():
@@ -215,7 +235,8 @@ class IndexCache:
             "CREATE TABLE collections (id INTEGER PRIMARY KEY, file_key TEXT NOT NULL UNIQUE, "
             "path TEXT NOT NULL, size INTEGER NOT NULL, mtime_ns INTEGER NOT NULL, "
             "inode TEXT NOT NULL, encoding TEXT NOT NULL, fingerprint TEXT NOT NULL, "
-            "game_count INTEGER NOT NULL, runtime_id TEXT NOT NULL, index_checksum TEXT NOT NULL)"
+            "game_count INTEGER NOT NULL, runtime_id TEXT NOT NULL, index_checksum TEXT NOT NULL, "
+            "source_sample TEXT, end_offset TEXT)"
         )
         db.execute(
             "CREATE TABLE entries (collection_id INTEGER NOT NULL REFERENCES collections(id) "
@@ -268,20 +289,24 @@ class IndexCache:
             if not self._prepare(db, write=False):
                 return None
             row = db.execute(
-                "SELECT id,path,size,mtime_ns,inode,encoding,fingerprint,game_count,runtime_id,index_checksum "
+                "SELECT id,path,size,mtime_ns,inode,encoding,fingerprint,game_count,runtime_id,index_checksum,source_sample,end_offset "
                 "FROM collections WHERE file_key=?", (key,),
             ).fetchone()
             if row is None:
                 return None
-            collection_id, saved_path, size, mtime, inode, encoding, fingerprint, count, runtime, checksum = row
+            collection_id, saved_path, size, mtime, inode, encoding, fingerprint, count, runtime, checksum, sample, end_cookie = row
             if (
                 not isinstance(saved_path, str) or os.path.normcase(saved_path) != os.path.normcase(canonical)
                 or type(size) is not int or type(mtime) is not int
                 or (size, mtime, _cookie(inode)) != signature
                 or encoding not in {"utf-8-sig", "cp1252"}
                 or not _valid_digest(fingerprint) or not _valid_digest(checksum)
+                or not _valid_digest(sample)
                 or type(count) is not int or count < 0 or runtime != RUNTIME_ID
             ):
+                return None
+            end_offset = _cookie(end_cookie)
+            if source_sample(Path(canonical), size, cancel=cancellation.check) != sample:
                 return None
             entries: list[GameInfo] = []
             header_names: dict[str, str] = {}
@@ -305,9 +330,10 @@ class IndexCache:
                     _checksum_row(digest, ordinal, cookie, encoded_headers)
                     entries.append(GameInfo(ordinal, headers, offset))
             cancellation.check()
+            _checksum_end(digest, end_cookie)
             if len(entries) != count or digest.hexdigest() != checksum:
                 return None
-            return CachedIndex(entries, fingerprint, encoding)
+            return CachedIndex(entries, fingerprint, encoding, sample, end_offset)
         except (OSError, sqlite3.Error, ValueError, TypeError, OverflowError, RecursionError) as error:
             cancellation.check()
             corrupt = _is_corrupt(error)
@@ -332,6 +358,8 @@ class IndexCache:
                     or type(inode) is not int or inode < 0
                     or collection.encoding not in {"utf-8-sig", "cp1252"}
                     or not _valid_digest(collection.fingerprint)
+                    or not _valid_digest(collection.source_sample) or collection.invalid
+                    or type(collection.end_offset) is not int or collection.end_offset < 0
                 ):
                     return False
                 db = self._connect(write=True)
@@ -345,9 +373,10 @@ class IndexCache:
                 db.execute("DELETE FROM collections WHERE file_key=?", (key,))
                 inserted = db.execute(
                     "INSERT INTO collections(file_key,path,size,mtime_ns,inode,encoding,fingerprint,"
-                    "game_count,runtime_id,index_checksum) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    "game_count,runtime_id,index_checksum,source_sample,end_offset) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
                     (key, canonical, size, mtime, str(inode), collection.encoding,
-                     collection.fingerprint, len(collection.entries), RUNTIME_ID, ""),
+                     collection.fingerprint, len(collection.entries), RUNTIME_ID, "", collection.source_sample,
+                     str(collection.end_offset)),
                 )
                 collection_id = inserted.lastrowid
                 digest = hashlib.sha256()
@@ -368,6 +397,7 @@ class IndexCache:
                 if batch:
                     cancellation.check()
                     db.executemany("INSERT INTO entries VALUES(?,?,?,?)", batch)
+                _checksum_end(digest, str(collection.end_offset))
                 db.execute(
                     "UPDATE collections SET index_checksum=? WHERE id=?",
                     (digest.hexdigest(), collection_id),

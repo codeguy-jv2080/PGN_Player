@@ -64,9 +64,28 @@ These include nested variations, comment/tag decoys, annotations, all result
 markers, missing results, FEN and Chess960 starts, cancellation, unchanged source
 bytes, encoded seek offsets, cache/resume migration, and linear-work checks for
 long malformed collections and repeated blank lines. Index tests forbid game
-tree construction, and unchanged-cache tests forbid PGN source reads. Ambiguous
-unnumbered continuations retain a boundary and a diagnostic; the parser does
-not guess whether two plausible headerless games were intended to be one.
+tree construction, and unchanged-cache tests permit only bounded binary source
+samples rather than full scanning or parsing. Ambiguous unnumbered continuations
+retain a boundary and a diagnostic; the parser does not guess whether two
+plausible headerless games were intended to be one.
+
+Run the stale-cache, saved-position and persistence regressions with:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest tests/test_stale_cache.py tests/test_stale_cache_ui.py tests/test_resume_identity.py tests/test_index_cache.py tests/test_pgn_index_reuse.py tests/test_pgn_recovery_cache.py tests/test_storage.py --basetemp=.build/stale-cache-tests
+```
+
+These use generated PGNs and temporary edition-specific databases. Coverage
+includes same-size edits with restored timestamps, changed headers or moves,
+reordered games, corrupted offsets/databases, changes during cache loading,
+saved-game digest mismatches, missing variation paths, and legacy resume handling.
+Migration tests verify backups, retained rows, committed WAL data and rollback
+on failure. Unchanged-cache tests forbid full reindexing and enforce at most
+32 KiB per source probe, or 64 KiB for an ordinary cached reopen. A simulated
+5 GiB source verifies the same fixed read budget; it is not a 5 GiB disk-speed
+benchmark. Move navigation tests forbid source I/O for the loaded game snapshot.
+See [cache validation and its limits](ARCHITECTURE.md#cache-validation-and-resume-integrity)
+for changes that bounded samples cannot detect.
 
 To also run the regression against the original, unmodified `WorldChamp2018.pgn`,
 set its location for the test process (replace the example path):

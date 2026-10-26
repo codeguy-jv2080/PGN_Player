@@ -51,6 +51,15 @@ reputation-based security prompt may therefore appear on first launch or install
 
 Since the first release, PGN Player has added:
 
+- **Safer cached reopening and saved positions (1.0.8)** — lightweight content
+  checks catch more changed PGNs without scanning the whole file on every open.
+  Saved positions are checked against the game before restoring a move. Older
+  indexes rebuild once as each file is next opened; preferences are preserved.
+- **More reliable PGN parsing (1.0.8)** — recognize consecutive games without
+  blank-line separators and recover supported malformed variations and internal
+  blank lines while preserving the original PGN.
+- **Chess960 compatibility (1.0.8)** — load and replay Chess960 games and handle
+  Chess960 castling correctly during Guess the Move.
 - **Chess-piece sounds** — move sounds and distinct capture sounds. Enable them
   through **View → Sound**.
 - **Mouse-wheel navigation** — hover over the board and scroll down to advance
@@ -122,12 +131,21 @@ The current move is highlighted and notation follows playback. Missing optional
 metadata is omitted. Malformed games display useful warnings where recovery is
 possible; the original PGN is never rewritten.
 
-The first open builds and saves a PGN index. Later opens reuse the saved offsets
-and headers when the file's path, size, modification time and file identity match.
-This avoids scanning or hashing an unchanged PGN again. Games still load only
-when selected, with at most eight parsed games kept in memory. Loading a saved
-index uses a brief status message; full indexing progress appears only when an
-index must be built. Changed files and invalid indexes are rebuilt automatically.
+The first open builds and saves a PGN index. Later opens check the file's path,
+size, modification time and file identity, plus small content samples before
+reusing its offsets and headers. Each sample check reads at most **32 KiB**;
+an ordinary saved-index reopen checks twice, reading at most **64 KiB** of the
+PGN regardless of its size. It does not rescan the whole file or parse every
+game. Games still load only when selected, with at most eight parsed games kept
+in memory. Loading a saved index uses a brief status message; full indexing
+progress appears only when an index must be built.
+
+Detected changes or invalid offsets trigger a background rebuild. Saved positions
+also check the selected game's content identity before restoring a move. Small
+samples cannot detect every edit between sampled areas when file metadata is
+preserved. An already loaded game remains an in-memory snapshot during playback;
+move-by-move navigation does not reread the source. See the
+[cache validation details and limits](docs/ARCHITECTURE.md#cache-validation-and-resume-integrity).
 
 ### Mouse wheel and keypad navigation
 
@@ -240,12 +258,21 @@ These stores are independent. Neither edition imports from or falls back to the
 other. If portable storage is unwritable, the app reports the problem rather
 than using installed-edition storage. Settings and resume positions stay local.
 Each edition also keeps its own `pgn-index-cache.sqlite3` in that data directory.
-This disposable cache contains PGN headers, offsets and file metadata, separate
-from preferences and resume positions. Cache problems fall back to normal PGN
-indexing. An unreadable cache database may be preserved beside it as a `.bak`
-before rebuilding; personal settings and original PGNs are never reset.
+This disposable cache contains PGN headers, offsets, file metadata and a small
+content-sample fingerprint, separate from preferences and resume positions.
+Older cache entries rebuild once as each PGN is next opened; entries for other
+files remain stored. Cache problems fall back to normal PGN indexing. An
+unreadable cache database may be preserved beside it as a `.bak` before rebuilding;
+personal settings and original PGNs are never reset.
 Session guess statistics last for the current session. Reopening the last file
-is opt-in. Changed PGNs are reindexed and outdated resume locations are ignored.
+is opt-in. Detected file changes are reindexed and outdated resume locations are
+ignored. The settings upgrade backs up the edition's database before adding a
+saved-game identity field, preserving preferences, recent files and saved positions.
+An older saved position can be restored after a fresh index confirms the original
+whole-file fingerprint. If an older position has no game identity and only a
+cached index is available, the player rebuilds that index once in the background
+to verify the source. If unchanged, it restores the position and saves its game
+identity for later cached opens.
 
 Close the relevant edition before updating it. Replace application files in its
 existing folder and keep `data/` untouched. The build script updates the same

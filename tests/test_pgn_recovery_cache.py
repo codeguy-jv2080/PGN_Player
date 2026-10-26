@@ -14,6 +14,7 @@ from pgn_player.models import GameInfo
 from pgn_player.pgn_loader import GameCollection, index_pgn, open_pgn
 from pgn_player.playback import PlaybackController
 from pgn_player.storage import SettingsStore
+from pgn_player.source_validation import MAX_SAMPLE_BYTES, source_sample
 
 
 LEGACY_RUNTIME = (
@@ -39,16 +40,45 @@ def forbidden_index(*args, **kwargs):
     raise AssertionError("Unchanged recovery indexes must reopen without scanning the PGN")
 
 
-def cached_without_source_reads(source, cache, monkeypatch, **kwargs):
+def cached_with_bounded_source_reads(source, cache, monkeypatch, **kwargs):
     original_open = Path.open
+    reads = 0
 
-    def guarded_open(path, *args, **options):
-        assert path.resolve() != source.resolve(), "Cache lookup read the PGN source"
-        return original_open(path, *args, **options)
+    class Probe:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return self.stream.__exit__(*args)
+
+        def __getattr__(self, name):
+            return getattr(self.stream, name)
+
+        def read(self, size=-1):
+            nonlocal reads
+            assert 0 < size <= MAX_SAMPLE_BYTES, "Cache reuse attempted an unbounded source read"
+            data = self.stream.read(size)
+            reads += len(data)
+            assert reads <= 2 * MAX_SAMPLE_BYTES
+            return data
+
+        def readline(self, *args):
+            raise AssertionError("Cache verification must not parse PGN lines")
+
+    def guarded_open(path, mode="r", *args, **options):
+        if path.resolve() == source.resolve():
+            assert mode == "rb"
+            return Probe(original_open(path, mode, *args, **options))
+        return original_open(path, mode, *args, **options)
 
     with monkeypatch.context() as patch:
         patch.setattr(Path, "open", guarded_open)
-        return open_pgn(source, cache_path=cache, indexer=forbidden_index, **kwargs)
+        result = open_pgn(source, cache_path=cache, indexer=forbidden_index, **kwargs)
+    assert 0 < reads <= 2 * MAX_SAMPLE_BYTES
+    return result
 
 
 @pytest.mark.parametrize("text, salted", [
@@ -85,10 +115,10 @@ def test_parser_revision_rebuild_preserves_unaffected_resume_identities(tmp_path
         assert player.go_to(resume["variation_path"])
         assert player.game.headers["Event"] == "Second" and player.node.san() == "d4"
 
-    saved = cached_without_source_reads(source, cache, monkeypatch)
+    saved = cached_with_bounded_source_reads(source, cache, monkeypatch)
     assert saved.from_cache and saved.fingerprint == fingerprint
     assert saved.entries == reopened.entries
-    current = cached_without_source_reads(source, cache, monkeypatch, current_collection=saved)
+    current = cached_with_bounded_source_reads(source, cache, monkeypatch, current_collection=saved)
     assert current.entries is saved.entries
     assert current.fingerprint == fingerprint and current._cache == {}
     assert source.read_bytes() == original
@@ -116,7 +146,9 @@ def test_changed_recovery_ordinals_rebuild_and_do_not_restore_legacy_positions(t
     old_fingerprint = legacy_fingerprint(original, legacy_salt)
     stat = source.stat()
     legacy = GameCollection(source.resolve(), legacy_entries, old_fingerprint, "utf-8-sig",
-                            (stat.st_size, stat.st_mtime_ns, stat.st_ino))
+                            (stat.st_size, stat.st_mtime_ns, stat.st_ino),
+                            source_sample=source_sample(source, stat.st_size),
+                            end_offset=index_pgn(source).end_offset)
     save_legacy(cache, legacy, monkeypatch)
     with SettingsStore(tmp_path / "settings.sqlite3") as store:
         store.save_resume(source, old_fingerprint, min(1, len(legacy_entries) - 1), (0,), "white")
@@ -128,7 +160,7 @@ def test_changed_recovery_ordinals_rebuild_and_do_not_restore_legacy_positions(t
         # Ineligible old rows are preserved, never deleted as a migration shortcut.
         assert store.load_resume(source, old_fingerprint) is not None
         store.save_resume(source, corrected.fingerprint, 1, (0,), "black")
-        saved = cached_without_source_reads(source, cache, monkeypatch)
+        saved = cached_with_bounded_source_reads(source, cache, monkeypatch)
         assert saved.from_cache and saved.fingerprint == corrected.fingerprint
         assert saved.entries == corrected.entries
         resume = store.load_resume(source, saved.fingerprint)
@@ -158,7 +190,7 @@ def test_recovered_offsets_round_trip_without_building_move_trees(tmp_path, monk
         patch.setattr(chess.pgn.GameBuilder, "begin_game", no_move_tree)
         first = open_pgn(source, cache_path=cache)
     assert len(first) == 300 and first._cache == {}
-    saved = cached_without_source_reads(source, cache, monkeypatch)
+    saved = cached_with_bounded_source_reads(source, cache, monkeypatch)
     assert saved.from_cache and saved.entries == first.entries
     assert bool(saved.warnings) == (encoding == "cp1252")
     for index in (299, 0, 137, *range(20), 298):

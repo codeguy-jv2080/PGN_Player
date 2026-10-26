@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (QAbstractSpinBox, QApplication, QCheckBox, QCombo
 
 from ..autoplay import AutoplayController
 from ..guess_move import GuessMoveController
-from ..pgn_loader import CachedIndexError, IndexingCancelled, index_pgn, open_pgn
+from ..pgn_loader import CachedIndexError, FileChangedError, IndexingCancelled, index_pgn, open_pgn
 from ..playback import PlaybackController
 from ..sound import MoveSounds
 from ..storage import DEFAULT_NOTATION_FONT_SIZE, NOTATION_FONT_SIZES
@@ -480,21 +480,45 @@ class MainWindow(QMainWindow):
             resume = None
             try:
                 resume = self.store.load_resume(collection.path, collection.fingerprint) if self._restore_requested else None
-                # Validate a saved seek before replacing the current player or
-                # saving its resume position during a cache-rebuild retry.
-                if collection.from_cache and resume and 0 <= resume["game_index"] < len(collection):
-                    collection.load_game(resume["game_index"])
-            except CachedIndexError:
+                # Verify the saved game before replacing the current player.
+                # A bounded file sample cannot prove that an unsampled game
+                # still contains the moves associated with this saved route.
+                if resume:
+                    if not 0 <= resume["game_index"] < len(collection):
+                        notices.append("Could not restore the saved position: its game number is no longer available.")
+                        resume = None
+                    elif resume["game_digest"] is None and collection.from_cache:
+                        # Normally the cache upgrade already causes a fresh
+                        # index. If that upgrade was interrupted before resume
+                        # gained its identity, verify the old full fingerprint
+                        # once instead of discarding a legitimate saved route.
+                        raise CachedIndexError("The older saved position requires a fresh PGN identity check.")
+                    elif resume["game_digest"] is not None:
+                        collection.verify_resume(resume["game_index"], resume["game_digest"])
+                    else:
+                        # Only a fresh full index can verify a legacy resume's
+                        # old collection hash without a historical game digest.
+                        collection.load_game(resume["game_index"])
+            except (CachedIndexError, FileChangedError):
                 raise
             except Exception as exc:
                 notices.append(f"Could not restore the saved position: {exc}")
+                resume = None
             self.player.set_collection(collection)
             try:
                 if resume:
                     if self.player.select_game(resume["game_index"]):
-                        self.player.go_to(resume["variation_path"])
+                        restored = self.player.go_to(resume["variation_path"])
+                        if not restored:
+                            notices.append("Could not restore the saved position: its variation path is no longer available. Showing the game's starting position.")
+                        elif resume["game_digest"] is None:
+                            # Establish the legacy record's identity now, before
+                            # a future reopen can use the newly saved index.
+                            self.store.save_resume(collection.path, collection.fingerprint,
+                                self.player.game_index, self.player.path, resume["orientation"],
+                                game_digest=self.player.game._source_digest)
                     self.board.orientation = resume.get("orientation", self.board.orientation)
-            except CachedIndexError:
+            except (CachedIndexError, FileChangedError):
                 raise
             except Exception as exc:
                 notices.append(f"Could not restore the saved position: {exc}")
@@ -512,7 +536,7 @@ class MainWindow(QMainWindow):
                 self._error("; ".join([*collection.warnings, *notices]))
             self._refresh()
             self.file_loaded.emit(str(collection.path))
-        except CachedIndexError:
+        except (CachedIndexError, FileChangedError):
             self.open_file(collection.path, restore=self._restore_requested, use_cache=False)
         except Exception as exc:
             self._error(f"Could not open PGN: {exc}")
@@ -576,7 +600,7 @@ class MainWindow(QMainWindow):
             if (self.player.game is previous_game and self.player.game_index == previous_index
                     and node is not None and node.parent is previous_node):
                 self._play_move_sound()
-        except CachedIndexError:
+        except (CachedIndexError, FileChangedError):
             self.open_file(self.player.collection.path, use_cache=False)
         except Exception as exc:
             self._error(f"Could not navigate: {exc}")
@@ -675,7 +699,7 @@ class MainWindow(QMainWindow):
                 self._play_timer.start(max(1, int(self.autoplay.next_delay * 1000)))
             else:
                 self.statusBar().showMessage("Playback finished.")
-        except CachedIndexError:
+        except (CachedIndexError, FileChangedError):
             self.open_file(self.player.collection.path, use_cache=False)
         except Exception as exc:
             self.autoplay.pause()
@@ -875,11 +899,12 @@ class MainWindow(QMainWindow):
         self._schedule_opponent()
 
     def _save_resume(self):
-        if self.player.collection is None or self.player.game is None:
+        if self.player.collection is None or self.player.game is None or self.player.collection.invalid:
             return
         try:
             self.store.save_resume(self.player.collection.path, self.player.collection.fingerprint,
-                self.player.game_index, self.player.path, self.board.orientation)
+                self.player.game_index, self.player.path, self.board.orientation,
+                game_digest=self.player.game._source_digest)
         except Exception as exc:
             self._error(f"Could not save playback position: {exc}")
 

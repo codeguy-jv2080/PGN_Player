@@ -1,4 +1,4 @@
-"""Persistent-index integration without reading PGN contents on cache hits."""
+"""Persistent-index integration with bounded source checks on cache hits."""
 from pathlib import Path
 import os
 import weakref
@@ -8,6 +8,7 @@ import pytest
 from pgn_player.models import GameInfo
 from pgn_player.paths import resolve_paths
 from pgn_player.pgn_loader import CachedIndexError, IndexingCancelled, open_pgn
+from pgn_player.source_validation import MAX_SAMPLE_BYTES
 
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -17,7 +18,46 @@ def forbidden_index(*args, **kwargs):
     raise AssertionError("An unchanged PGN must not be scanned or hashed again")
 
 
-def test_first_open_saves_and_reopen_never_reads_the_pgn(tmp_path, monkeypatch):
+def bounded_source_reads(monkeypatch, source, limit):
+    """Permit only fixed-size binary probes, never sequential PGN parsing."""
+    native_open = Path.open
+    counts = {"bytes": 0, "opens": 0}
+
+    class Probe:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return self.stream.__exit__(*args)
+
+        def __getattr__(self, name):
+            return getattr(self.stream, name)
+
+        def read(self, size=-1):
+            assert 0 < size <= MAX_SAMPLE_BYTES, "Cache verification attempted an unbounded source read"
+            data = self.stream.read(size)
+            counts["bytes"] += len(data)
+            assert counts["bytes"] <= limit, "Cache verification exceeded its fixed source-read budget"
+            return data
+
+        def readline(self, *args):
+            raise AssertionError("Cache verification must not parse PGN lines")
+
+    def guarded_open(path, mode="r", *args, **kwargs):
+        if path.resolve() == source.resolve():
+            assert mode == "rb", "Cache verification must use bounded binary reads"
+            counts["opens"] += 1
+            return Probe(native_open(path, mode, *args, **kwargs))
+        return native_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", guarded_open)
+    return counts
+
+
+def test_first_open_saves_and_reopen_only_reads_bounded_source_samples(tmp_path, monkeypatch):
     source = FIXTURES / "multiple_games.pgn"
     cache = tmp_path / "pgn-index-cache.sqlite3"
     phases, progress = [], []
@@ -26,21 +66,17 @@ def test_first_open_saves_and_reopen_never_reads_the_pgn(tmp_path, monkeypatch):
     assert phases == ["cache", "indexing", "saving"]
     assert progress[0] == 0 and progress[-1] == 100
     assert cache.exists()
-    original_open = Path.open
-
-    def no_source_read(path, *args, **kwargs):
-        assert path.resolve() != source.resolve(), "Cache lookup opened the PGN"
-        return original_open(path, *args, **kwargs)
-
     phases.clear()
     progress.clear()
     with monkeypatch.context() as patch:
-        patch.setattr(Path, "open", no_source_read)
+        reads = bounded_source_reads(patch, source, 2 * MAX_SAMPLE_BYTES)
         second = open_pgn(source, cache_path=cache, indexer=forbidden_index,
             status=phases.append, progress=progress.append)
+    assert 0 < reads["bytes"] <= 2 * MAX_SAMPLE_BYTES
     assert second.from_cache
     assert second.entries == first.entries
     assert second.fingerprint == first.fingerprint
+    assert second.end_offset == first.end_offset
     assert second._cache == {}
     assert phases == ["cache"] and progress == []
     assert second.load_game(2).next().san() == "Nf3"
@@ -178,7 +214,7 @@ def test_cached_headerless_result_is_not_mistaken_for_bad_offset(tmp_path):
     assert saved.load_game(0).headers["Result"] == "1-0"
 
 
-def test_current_unchanged_index_is_shared_without_pgn_or_sqlite_reads(tmp_path, monkeypatch):
+def test_current_unchanged_index_is_shared_with_one_bounded_probe_and_no_sqlite_reads(tmp_path, monkeypatch):
     from pgn_player.index_cache import IndexCache
     from pgn_player.pgn_loader import index_pgn
     source = (FIXTURES / "multiple_games.pgn").resolve()
@@ -190,7 +226,7 @@ def test_current_unchanged_index_is_shared_without_pgn_or_sqlite_reads(tmp_path,
         raise AssertionError("Current index reuse must not allocate another SQLite index")
 
     monkeypatch.setattr(IndexCache, "load", forbidden_cache)
-    monkeypatch.setattr(Path, "open", forbidden_cache)
+    reads = bounded_source_reads(monkeypatch, source, MAX_SAMPLE_BYTES)
     phases, progress = [], []
     reused = open_pgn(source, cache_path=tmp_path / "absent-cache.sqlite3",
         current_collection=original, indexer=forbidden_index,
@@ -198,7 +234,10 @@ def test_current_unchanged_index_is_shared_without_pgn_or_sqlite_reads(tmp_path,
     assert reused is not original
     assert reused.entries is original.entries
     assert reused.fingerprint == original.fingerprint and reused.encoding == original.encoding
+    assert reused.end_offset == original.end_offset
     assert reused.from_cache and reused._cache == {} and reused.errors == {}
+    assert 0 < reads["bytes"] <= MAX_SAMPLE_BYTES
+    assert reads["opens"] == 1
     assert phases == ["cache", "current"] and progress == []
 
 

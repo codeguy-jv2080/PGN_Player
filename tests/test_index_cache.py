@@ -14,6 +14,7 @@ from pgn_player.index_cache import APPLICATION_ID, BATCH_SIZE, CacheCancelled, I
 from pgn_player.models import GameInfo
 from pgn_player.pgn_loader import GameCollection, index_pgn
 from pgn_player.storage import SettingsStore
+from pgn_player.source_validation import MAX_SAMPLE_BYTES, source_sample
 
 
 def collection(tmp_path, name="study.pgn", count=3):
@@ -36,6 +37,8 @@ def synthetic_collection(tmp_path, count):
                for number in range(count)],
         hashlib.sha256(b"*").hexdigest(), "utf-8-sig",
         (stat.st_size, stat.st_mtime_ns, stat.st_ino),
+        source_sample=source_sample(path, stat.st_size),
+        end_offset=0,
     )
 
 
@@ -55,10 +58,12 @@ def test_first_save_reopen_preserves_all_headers_offsets_and_lazy_loading(tmp_pa
     assert restored.entries == original.entries
     assert restored.fingerprint == original.fingerprint
     assert restored.encoding == original.encoding
+    assert restored.end_offset == original.end_offset
     assert restored.entries[1].headers["Annotator"] == "A synthetic author"
     assert "Unicode ♞" in restored.entries[1].headers["X-Custom"]
     lazy = GameCollection(original.path, restored.entries, restored.fingerprint,
-                          restored.encoding, original._signature)
+                          restored.encoding, original._signature, source_sample=restored.source_sample,
+                          end_offset=restored.end_offset)
     assert not lazy._cache
     assert lazy.entries[2].search_text == original.entries[2].search_text
     for index in (2, 0, 1):
@@ -70,18 +75,46 @@ def test_first_save_reopen_preserves_all_headers_offsets_and_lazy_loading(tmp_pa
                          str(original._signature[2]), len(original.entries))
 
 
-def test_cache_load_does_not_open_pgn_or_compute_its_digest(tmp_path, monkeypatch):
+def test_cache_load_only_reads_a_bounded_binary_source_sample(tmp_path, monkeypatch):
     original = collection(tmp_path)
     cache = IndexCache(tmp_path / "cache.sqlite3")
     assert cache.save(original)
     native_open = Path.open
+    reads = 0
 
-    def deny_pgn_open(path, *args, **kwargs):
-        assert path != original.path, "A cache hit must not scan PGN bytes."
-        return native_open(path, *args, **kwargs)
+    class Probe:
+        def __init__(self, stream):
+            self.stream = stream
 
-    monkeypatch.setattr(Path, "open", deny_pgn_open)
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return self.stream.__exit__(*args)
+
+        def __getattr__(self, name):
+            return getattr(self.stream, name)
+
+        def read(self, size=-1):
+            nonlocal reads
+            assert 0 < size <= MAX_SAMPLE_BYTES, "A cache hit must not scan the full PGN"
+            data = self.stream.read(size)
+            reads += len(data)
+            assert reads <= MAX_SAMPLE_BYTES
+            return data
+
+        def readline(self, *args):
+            raise AssertionError("Cache verification must not parse PGN lines")
+
+    def bounded_open(path, mode="r", *args, **kwargs):
+        if path.resolve() == original.path.resolve():
+            assert mode == "rb"
+            return Probe(native_open(path, mode, *args, **kwargs))
+        return native_open(path, mode, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", bounded_open)
     assert cache.load(original.path, original._signature).entries == original.entries
+    assert 0 < reads <= MAX_SAMPLE_BYTES
 
 
 @pytest.mark.parametrize("field", [0, 1, 2])
@@ -105,6 +138,65 @@ def test_different_paths_have_independent_indexes_and_discard_is_scoped(tmp_path
     cache.discard(first.path)
     assert cache.load(first.path, first._signature) is None
     assert cache.load(second.path, second._signature).entries == second.entries
+
+
+def test_version_one_upgrade_preserves_other_indexes_until_individually_rebuilt(tmp_path):
+    first = collection(tmp_path, "first.pgn", 2)
+    second = collection(tmp_path, "second.pgn", 4)
+    cache = IndexCache(tmp_path / "cache.sqlite3")
+    assert cache.save(first) and cache.save(second)
+    with sqlite3.connect(cache.db_path) as db:
+        db.execute("ALTER TABLE collections DROP COLUMN source_sample")
+        db.execute("ALTER TABLE collections DROP COLUMN end_offset")
+        db.execute("PRAGMA user_version=1")
+        old_second = db.execute("SELECT * FROM collections WHERE path=?", (str(second.path),)).fetchone()
+        old_entries = db.execute("SELECT * FROM entries WHERE collection_id=? ORDER BY ordinal", (old_second[0],)).fetchall()
+    assert cache.load(first.path, first._signature) is None
+    assert cache.load(second.path, second._signature) is None
+    # Current source bytes must never be attached to an unverified old index.
+    assert cache.save(first)
+    with sqlite3.connect(cache.db_path) as db:
+        upgraded = db.execute("SELECT * FROM collections WHERE path=?", (str(second.path),)).fetchone()
+        assert upgraded == (*old_second, None, None)
+        assert db.execute("SELECT * FROM entries WHERE collection_id=? ORDER BY ordinal", (old_second[0],)).fetchall() == old_entries
+        assert db.execute("PRAGMA user_version").fetchone()[0] == 2
+    assert cache.load(first.path, first._signature).entries == first.entries
+    assert cache.load(second.path, second._signature) is None
+    assert cache.save(second)
+    assert cache.load(first.path, first._signature).entries == first.entries
+    assert cache.load(second.path, second._signature).entries == second.entries
+
+
+def test_source_sample_handles_short_reads_without_exceeding_its_budget(tmp_path, monkeypatch):
+    source = tmp_path / "short-reads.pgn"
+    source.write_bytes(b"1234567890" * 10000)
+    size = source.stat().st_size
+    expected = source_sample(source, size)
+    original_open = Path.open
+    total = 0
+
+    class ShortReads:
+        def __init__(self, stream):
+            self.stream = stream
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return self.stream.__exit__(*args)
+
+        def seek(self, offset):
+            return self.stream.seek(offset)
+
+        def read(self, length):
+            nonlocal total
+            data = self.stream.read(min(length, 127))
+            total += len(data)
+            return data
+
+    monkeypatch.setattr(Path, "open", lambda path, *args, **kwargs: ShortReads(original_open(path, *args, **kwargs)))
+    assert source_sample(source, size) == expected
+    assert total == MAX_SAMPLE_BYTES
 
 
 def test_normalized_paths_identify_same_cached_file(tmp_path):
@@ -402,7 +494,8 @@ def test_cancellation_rolls_back_partial_replacement(tmp_path, monkeypatch):
     assert cache.save(original)
     replacement = GameCollection(original.path,
                                  [GameInfo(i, {"Event": "replacement"}, i) for i in range(BATCH_SIZE * 2 + 1)],
-                                 original.fingerprint, original.encoding, original._signature)
+                                 original.fingerprint, original.encoding, original._signature,
+                                 source_sample=original.source_sample, end_offset=original.end_offset)
     connections = track_connections(monkeypatch)
     cancelled = False
     native_connect = cache._connect
@@ -482,7 +575,8 @@ def test_sqlite_write_failure_rolls_back_previous_index(tmp_path, monkeypatch):
     assert cache.save(original)
     replacement = GameCollection(original.path,
                                  [GameInfo(i, {"Event": "replacement"}, i) for i in range(BATCH_SIZE * 2)],
-                                 original.fingerprint, original.encoding, original._signature)
+                                 original.fingerprint, original.encoding, original._signature,
+                                 source_sample=original.source_sample, end_offset=original.end_offset)
     connections = track_connections(monkeypatch)
     native_connect = cache._connect
 
@@ -506,7 +600,8 @@ def test_reader_sees_complete_old_index_during_replacement(tmp_path, monkeypatch
     assert cache.save(original)
     replacement = GameCollection(original.path,
                                  [GameInfo(i, {"Event": "replacement"}, i) for i in range(BATCH_SIZE + 1)],
-                                 original.fingerprint, original.encoding, original._signature)
+                                 original.fingerprint, original.encoding, original._signature,
+                                 source_sample=original.source_sample, end_offset=original.end_offset)
     track_connections(monkeypatch)
     native_connect = cache._connect
     observations = []

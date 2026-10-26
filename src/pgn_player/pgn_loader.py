@@ -1,8 +1,8 @@
 """Read-only PGN indexing and bounded, lazy game loading.
 
 Indexing deliberately reads headers without constructing every move tree. A full
-content digest identifies a collection for resume storage; metadata checks guard
-subsequent seeks against a file edited while it is open.
+content digest identifies a collection for resume storage; metadata and bounded
+content checks guard subsequent seeks against a file edited while it is open.
 """
 
 from __future__ import annotations
@@ -21,6 +21,7 @@ import chess.pgn
 from .models import GameInfo
 from .index_cache import CacheCancelled, IndexCache, PGN_BOUNDARY_ID, PGN_RECOVERY_ID
 from .pgn_recovery import VariationRecovery
+from .source_validation import source_sample
 
 
 class PgnLoadError(ValueError):
@@ -310,6 +311,19 @@ class _QuietGameBuilder(chess.pgn.GameBuilder):
         self.game.errors.append(error)
 
 
+class _GameDigestReader:
+    """Fingerprint only the selected game as python-chess already reads it."""
+
+    def __init__(self, reader):
+        self.reader = reader
+        self.digest = hashlib.sha256(b"pgn-game-text-v1\0")
+
+    def readline(self):
+        line = self.reader.readline()
+        self.digest.update(line.encode("utf-8"))
+        return line
+
+
 class GameCollection:
     """An index over an unchanged PGN file, with at most eight parsed games."""
 
@@ -323,6 +337,8 @@ class GameCollection:
         *,
         cache_size: int = 8,
         from_cache: bool = False,
+        source_sample: str | None = None,
+        end_offset: int | None = None,
     ) -> None:
         self.path = path
         self.entries = entries
@@ -330,6 +346,9 @@ class GameCollection:
         self.encoding = encoding
         self.cache_size = max(1, cache_size)
         self.from_cache = from_cache
+        self.source_sample = source_sample
+        self.end_offset = end_offset
+        self.invalid = False
         self.errors: dict[int, list[str]] = {}
         self.warnings = (
             ["This file is not UTF-8; text is being read using Windows-1252."]
@@ -342,13 +361,31 @@ class GameCollection:
     def __len__(self) -> int:
         return len(self.entries)
 
-    def _check_source(self) -> None:
+    def _check_source(self, *, cancel=None) -> None:
+        if self.invalid:
+            raise FileChangedError("The PGN index is no longer valid. Reopen it to rebuild its game list.")
         try:
             unchanged = _signature(self.path) == self._signature
+            if unchanged and self.source_sample is not None:
+                unchanged = source_sample(self.path, self._signature[0], cancel=cancel) == self.source_sample
+                unchanged = unchanged and _signature(self.path) == self._signature
         except OSError as error:
             raise PgnLoadError("The PGN file is no longer accessible. Reopen it to continue.") from error
         if not unchanged:
+            self.invalid = True
             raise FileChangedError("The PGN file changed while open. Reopen it to rebuild its game list.")
+
+    def verify_resume(self, index: int, game_digest: str) -> chess.pgn.Game:
+        game = self.load_game(index)
+        if game._source_digest != game_digest:
+            if self.from_cache:
+                self.invalid = True
+                raise CachedIndexError("The saved game no longer matches the PGN. Rebuilding its index is required.")
+            # A full index has already established the current file identity.
+            # Reject a conflicting resume record without repeatedly rebuilding
+            # the same valid index (for example, after resume data corruption).
+            raise PgnLoadError("The saved game identity does not match the freshly indexed PGN.")
+        return game
 
     def load_game(self, index: int) -> chess.pgn.Game:
         if not 0 <= index < len(self.entries):
@@ -364,17 +401,26 @@ class GameCollection:
                         stream.seek(self.entries[index].offset)
                     except (OSError, ValueError, OverflowError) as error:
                         if self.from_cache:
+                            self.invalid = True
                             raise CachedIndexError("A saved game offset is invalid. Rebuilding the PGN index is required.") from error
                         raise
                     reader = _GameBoundaryReader(stream, self.entries[index].offset)
-                    game = chess.pgn.read_game(reader, Visitor=_QuietGameBuilder)
+                    digest_reader = _GameDigestReader(reader)
+                    game = chess.pgn.read_game(digest_reader, Visitor=_QuietGameBuilder)
+                    end_offset = stream.tell()
                     if game is not None:
+                        game._source_digest = digest_reader.digest.hexdigest()
                         game.errors.extend(ValueError(message) for message in reader.diagnostics)
                 self._check_source()
                 # Compare literal tags, before GameBuilder's default tags and
                 # movetext-derived Result can alter the parsed game headers.
                 if self.from_cache and (game is None or game._source_headers != self.entries[index].headers):
+                    self.invalid = True
                     raise CachedIndexError("A saved game offset no longer matches its headers. Rebuilding the PGN index is required.")
+                expected_end = self.entries[index + 1].offset if index + 1 < len(self.entries) else self.end_offset
+                if self.from_cache and end_offset != expected_end:
+                    self.invalid = True
+                    raise CachedIndexError("A saved game boundary no longer matches the PGN. Rebuilding its index is required.")
                 if game is None:
                     message = f"Game {index + 1} could not be read."
                     self.errors[index] = [message]
@@ -407,7 +453,7 @@ def open_pgn(
     use_cache: bool = True,
     current_collection: GameCollection | None = None,
 ) -> GameCollection:
-    """Reuse an unchanged file's saved index, without reading/hash-checking PGN.
+    """Reuse a saved index after metadata and fixed-size source-content checks.
 
     The cache lives in the caller's edition-specific data folder. Its SQLite
     connections are local to this worker; settings/resume storage is untouched.
@@ -437,17 +483,28 @@ def open_pgn(
                     current_collection is not None
                     and os.path.normcase(str(current_collection.path)) == os.path.normcase(str(path))
                     and current_collection._signature == signature
-                    and _signature(path) == signature
+                    and not current_collection.invalid
+                    and current_collection.source_sample is not None
+                    and type(current_collection.end_offset) is int and current_collection.end_offset >= 0
                 ):
-                    phase("current")
-                    return GameCollection(path, current_collection.entries,
-                        current_collection.fingerprint, current_collection.encoding,
-                        signature, cache_size=current_collection.cache_size, from_cache=True)
+                    try:
+                        current_collection._check_source(cancel=check_cancel)
+                    except FileChangedError:
+                        pass
+                    else:
+                        phase("current")
+                        return GameCollection(path, current_collection.entries,
+                            current_collection.fingerprint, current_collection.encoding,
+                            signature, cache_size=current_collection.cache_size, from_cache=True,
+                            source_sample=current_collection.source_sample, end_offset=current_collection.end_offset)
                 saved = cache.load(path, signature, cancel=cancel)
-                if saved is not None and _signature(path) == signature:
+                if (saved is not None and _signature(path) == signature
+                        and source_sample(path, signature[0], cancel=check_cancel) == saved.source_sample
+                        and _signature(path) == signature):
                     check_cancel()
                     return GameCollection(path, saved.entries, saved.fingerprint,
-                        saved.encoding, signature, from_cache=True)
+                        saved.encoding, signature, from_cache=True, source_sample=saved.source_sample,
+                        end_offset=saved.end_offset)
             except (CacheCancelled, IndexingCancelled):
                 raise
             except (OSError, ValueError):
@@ -461,12 +518,12 @@ def open_pgn(
         phase("indexing")
         collection = (indexer or index_pgn)(path, progress=progress, cancel=cancel)
         check_cancel()
-        collection._check_source()
+        collection._check_source(cancel=check_cancel)
         phase("saving")
         if not cache.save(collection, cancel=cancel):
             collection.warnings.append("The PGN opened, but its index could not be saved; a later open may need to index it again.")
         check_cancel()
-        collection._check_source()
+        collection._check_source(cancel=check_cancel)
         return collection
     except CacheCancelled as error:
         raise IndexingCancelled("PGN loading was cancelled.") from error
@@ -501,6 +558,7 @@ def index_pgn(
     report(0)
     try:
         signature = _signature(path)
+        initial_sample = source_sample(path, signature[0], cancel=check_cancel)
         size = max(signature[0], 1)
         digest = hashlib.sha256()
         decoder = codecs.getincrementaldecoder("utf-8-sig")("strict")
@@ -524,6 +582,7 @@ def index_pgn(
                     encoding = "cp1252"
 
         entries: list[GameInfo] = []
+        end_offset = 0
         recovered_boundary = False
         recovered_movetext = False
         recovery = VariationRecovery(cancel=check_cancel)
@@ -532,6 +591,10 @@ def index_pgn(
             while True:
                 check_cancel()
                 offset = stream.tell()
+                if entries:
+                    # This is also the ending cookie of the last successful
+                    # read_headers call. Reuse the existing tell() per game.
+                    end_offset = offset
                 reader = _GameBoundaryReader(stream, offset, recovery=recovery, line_base=line_base, cancel=check_cancel)
                 headers = chess.pgn.read_headers(reader)
                 line_base += reader._lines
@@ -543,7 +606,9 @@ def index_pgn(
                 # tell() is an opaque text cookie and may exceed the file size.
                 # The underlying buffered position measures actual bytes read.
                 report(30 + int(69 * min(stream.buffer.tell(), size) / size))
-        if _signature(path) != signature:
+        if (_signature(path) != signature
+                or source_sample(path, signature[0], cancel=check_cancel) != initial_sample
+                or _signature(path) != signature):
             raise FileChangedError("The PGN changed while it was being indexed. Please open it again.")
         check_cancel()
         report(100)
@@ -556,6 +621,7 @@ def index_pgn(
             # The older separator adapter split/merged these records. Keep its
             # resume rows, but never restore their now-incorrect game ordinals.
             digest.update(b"\0" + PGN_RECOVERY_ID.encode("ascii"))
-        return GameCollection(path, entries, digest.hexdigest(), encoding, signature)
+        return GameCollection(path, entries, digest.hexdigest(), encoding, signature,
+                              source_sample=initial_sample, end_offset=end_offset)
     except (OSError, UnicodeError) as error:
         raise PgnLoadError(f"Cannot read this PGN file: {error}") from error
